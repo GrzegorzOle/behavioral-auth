@@ -1,6 +1,30 @@
+"""Mouse dynamics feature extractor.
+
+Computes 9 features from a window of raw mouse events:
+  - f_ms_count        : number of relative-movement events
+  - f_ms_speed_mean   : mean cursor speed (pixels/s)
+  - f_ms_speed_std    : std dev of cursor speed
+  - f_ms_acc_mean     : mean acceleration magnitude
+  - f_ms_clicks       : number of completed left-click press-release pairs
+  - f_ms_click_dwell  : mean click hold duration (ms)
+  - f_ms_scrolls      : number of scroll wheel events
+  - f_ms_idle_ratio   : fraction of time the cursor is nearly stationary
+  - f_ms_curvature    : mean absolute direction change between moves
+"""
+
 import numpy as np
 
-def extract_mouse_features(df):
+
+def extract_mouse_features(df) -> dict | None:
+    """Extract mouse dynamics from a DataFrame of mixed device events.
+
+    Args:
+        df: DataFrame slice for the current window (all device types).
+            Mouse rows are filtered internally by dev_type == 'mouse'.
+
+    Returns:
+        Dict of 9 float features, or None if the window is too sparse.
+    """
     m = df[df.dev_type == 'mouse'].copy(); rel = m[m.ev_type == 2]
     if rel.empty or len(rel) < 3:
         return None

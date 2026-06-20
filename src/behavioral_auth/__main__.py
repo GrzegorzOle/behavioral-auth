@@ -1,3 +1,16 @@
+"""Entry point for ``python -m behavioral_auth <command>``.
+
+Available commands mirror the installed CLI entry points:
+  collector  – capture keyboard/mouse events
+  features   – extract feature windows and sequences
+  train      – train the ONNX autoencoder
+  infer      – run one inference cycle
+  report     – print decision metrics
+  face       – face enrollment / verification (OpenCV LBPH)
+  status     – pipeline status dashboard
+  verify     – live behavioural verification session
+"""
+
 import sys
 from behavioral_auth.cli.collector_cmd import main as collector_main
 from behavioral_auth.cli.features_cmd import main as features_main
@@ -24,4 +37,5 @@ if __name__ == '__main__':
     if cmd in COMMANDS:
         COMMANDS[cmd]()
     else:
-        print('usage: python -m behavioral_auth [collector|features|train|infer|report|face|status]')
+        print('usage: python -m behavioral_auth '
+              '[collector|features|train|infer|report|face|status|verify]')

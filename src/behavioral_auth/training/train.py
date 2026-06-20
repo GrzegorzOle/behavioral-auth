@@ -1,3 +1,14 @@
+"""Training entry point for the behavioural autoencoder.
+
+Pipeline:
+  1. Load all fused_sequences from DuckDB.
+  2. Fit and save a per-feature z-score scaler.
+  3. Train a Conv1D autoencoder (Encoder) using MSE loss.
+  4. Compute validation reconstruction errors → derive thresholds.
+  5. Export model to ONNX and write metadata JSON.
+  6. Register the new model version in model_registry.
+"""
+
 from pathlib import Path
 import json, os
 import duckdb, numpy as np, torch, torch.nn as nn
@@ -9,7 +20,8 @@ from behavioral_auth.features.scaler import fit_and_save_scaler, apply_scaler
 from behavioral_auth.training.dataset import load_training_dataset
 from behavioral_auth.training.thresholds import calculate_thresholds
 
-def train():
+def train() -> None:
+    """Run the full training pipeline and export the ONNX model."""
     cfg = load_settings()
     conn = duckdb.connect(cfg.storage.db_path)
     X = load_training_dataset(conn)

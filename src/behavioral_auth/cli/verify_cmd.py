@@ -1,8 +1,8 @@
-"""behavioral-verify – real-time behavioral authentication verification.
+"""behavioral-verify – real-time behavioural authentication verification.
 
 Starts the collector as a subprocess (auto-wraps with 'sg input' if the
 current session lacks the input group), then periodically scores the
-accumulated data and shows a live dashboard.
+accumulated data and displays a live dashboard.
 
 Usage:
     behavioral-verify                  # 60-second session, score every 10s
@@ -150,10 +150,10 @@ def _score_now(skip_face: bool, verify_session_id: str | None = None) -> dict | 
 
 def _header(duration: int, interval: int, skip_face: bool) -> None:
     print(f"\n{_BOLD}╔══════════════════════════════════════════════════╗")
-    print(f"║       behavioral-auth  •  weryfikacja na żywo        ║")
+    print(f"║       behavioral-auth  •  live verification          ║")
     print(f"╚══════════════════════════════════════════════════╝{_RESET}")
-    print(f"  Czas sesji : {duration}s   Interwał : {interval}s   "
-          f"Twarz : {'pominięta' if skip_face else 'aktywna'}")
+    print(f"  Session time : {duration}s   Interval : {interval}s   "
+          f"Face : {'skipped' if skip_face else 'active'}")
     print(f"  {_GREEN}■ ALLOW{_RESET} < {_YELLOW}■ CHALLENGE{_RESET} < {_RED}■ LOCK{_RESET}\n")
 
 def _print_score(r: dict, elapsed: float, event_count: int | str) -> None:
@@ -176,14 +176,14 @@ def _print_score(r: dict, elapsed: float, event_count: int | str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="behavioral-verify",
-        description="Weryfikacja behawioralna na żywo – zbieranie + ocena razem",
+        description="Live behavioural verification – data collection + scoring combined",
     )
     parser.add_argument("--duration", type=int, default=60, metavar="SEC",
-                        help="Długość sesji w sekundach (domyślnie 60)")
+                        help="Session duration in seconds (default: 60)")
     parser.add_argument("--interval", type=int, default=10, metavar="SEC",
-                        help="Co ile sekund oceniać (domyślnie 10)")
+                        help="Scoring interval in seconds (default: 10)")
     parser.add_argument("--no-face", action="store_true",
-                        help="Pomijaj weryfikację twarzy (szybsze)")
+                        help="Skip face verification (faster)")
     args = parser.parse_args()
 
     from behavioral_auth.config import load_settings
@@ -233,11 +233,11 @@ def main() -> None:
 
     if col_proc.poll() is not None:
         err = col_proc.stderr.read().decode(errors="replace")
-        print(f"❌  Collector nie uruchomił się:\n{err}")
-        print("Spróbuj: sg input -c 'behavioral-verify'")
+        print(f"❌  Collector failed to start:\n{err}")
+        print("Try: sg input -c 'behavioral-verify'")
         sys.exit(1)
 
-    print(f"  Sesja {session_id[:8]}…  Zacznij normalnie pisać / poruszać myszą…\n")
+    print(f"  Session {session_id[:8]}…  Start typing / moving the mouse normally…\n")
 
     # ── Scoring loop ─────────────────────────────────────────────────────────
     t_start = time.time()
@@ -273,7 +273,7 @@ def main() -> None:
                     results.append(r)
                 else:
                     print(f"  [{datetime.now().strftime('%H:%M:%S')}]  "
-                          f"Za mało danych ({n_ev} zdarzeń tej sesji) – dalej pisz…\n")
+                          f"Not enough data ({n_ev} events this session) – keep typing…\n")
 
                 t_next += args.interval
 
@@ -284,7 +284,7 @@ def main() -> None:
             time.sleep(0.4)
 
     except KeyboardInterrupt:
-        print("\n  Przerwano (Ctrl+C)")
+        print("\n  Interrupted (Ctrl+C)")
     finally:
         stop_collector(col_proc)
 
@@ -292,14 +292,14 @@ def main() -> None:
     print(f"\n{'─'*54}")
     if results:
         fv = [r["fused"] for r in results]
-        print(f"  Podsumowanie sesji ({len(results)} pomiarów)")
+        print(f"  Session summary ({len(results)} measurements)")
         print(f"  Fused score: min={min(fv):.3f}  max={max(fv):.3f}  "
-              f"śr={sum(fv)/len(fv):.3f}")
+              f"avg={sum(fv)/len(fv):.3f}")
         for dec, cnt in sorted(Counter(r["decision"].split()[0] for r in results).items()):
             icon = "✅" if dec == "ALLOW" else ("⚠️" if dec == "CHALLENGE" else "🔒")
             print(f"  {icon}  {dec}: {cnt}×")
     else:
-        print("  Brak danych – zbierz min. 2–3 minuty aktywności:")
-        print("    sg input -c 'behavioral-collector'  (w osobnym terminalu)")
+        print("  No data – collect at least 2–3 minutes of activity:")
+        print("    sg input -c 'behavioral-collector'  (in a separate terminal)")
     print()
 

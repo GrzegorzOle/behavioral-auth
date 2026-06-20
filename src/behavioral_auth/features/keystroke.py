@@ -1,6 +1,29 @@
+"""Keystroke dynamics feature extractor.
+
+Computes 8 features from a window of raw keyboard events:
+  - f_ks_count         : total key events in the window
+  - f_ks_mean_dwell    : mean key-hold duration (ms)
+  - f_ks_std_dwell     : std dev of key-hold duration
+  - f_ks_mean_flight   : mean inter-key interval (ms)
+  - f_ks_std_flight    : std dev of inter-key interval
+  - f_ks_backspace_ratio : fraction of backspace presses
+  - f_ks_repeat_ratio  : fraction of auto-repeat events
+  - f_ks_entropy       : Shannon entropy of dwell-time histogram
+"""
+
 import numpy as np
 
-def extract_keystroke_features(df):
+
+def extract_keystroke_features(df) -> dict | None:
+    """Extract keystroke dynamics from a DataFrame of keyboard events.
+
+    Args:
+        df: DataFrame slice containing only keyboard device rows,
+            with columns [ts_ns, ev_type, ev_code, ev_value].
+
+    Returns:
+        Dict of 8 float features, or None if the window is too sparse.
+    """
     if df.empty:
         return None
     k = df[df.ev_type == 1].copy()

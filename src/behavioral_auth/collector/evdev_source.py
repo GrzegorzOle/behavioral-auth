@@ -1,3 +1,13 @@
+"""Async evdev collector.
+
+Reads raw keyboard/mouse events from all detected (or configured) input
+devices and writes them to DuckDB via the Writer batch buffer.
+
+The session ID is taken from the BEHAVIORAL_SESSION_ID environment variable
+when set (used by behavioral-verify to correlate events with a specific
+verification session), otherwise a fresh UUID is generated.
+"""
+
 import asyncio, os, signal, socket, sys, uuid
 from datetime import datetime, timezone
 import duckdb, evdev
@@ -6,10 +16,12 @@ from behavioral_auth.config import load_settings
 from behavioral_auth.collector.device_detector import detect_devices, is_keyboard_device
 from behavioral_auth.collector.writer import Writer
 
-def infer_dev_type(dev):
+def infer_dev_type(dev) -> str:
+    """Return 'keyboard' or 'mouse' based on device capabilities."""
     return 'keyboard' if is_keyboard_device(dev) else 'mouse'
 
-async def read_loop(path, writer, session_id):
+async def read_loop(path: str, writer, session_id: str) -> None:
+    """Async loop: read events from *path* and hand them to *writer*."""
     dev = evdev.InputDevice(path)
     dev_type = infer_dev_type(dev)
     logger.info(f'{path} {dev.name} -> {dev_type}')
@@ -20,7 +32,8 @@ async def read_loop(path, writer, session_id):
         ts_utc = datetime.fromtimestamp(ev.sec + ev.usec / 1_000_000, tz=timezone.utc)
         writer.add((ts_ns, ts_utc, session_id, path, dev.name, dev_type, ev.type, ev.code, ev.value))
 
-async def run_collector():
+async def run_collector() -> None:
+    """Entry point: set up devices, register session in DB, start event loops."""
     cfg = load_settings()
     logger.remove(); logger.add(sys.stderr, level=cfg.general.log_level)
     # Allow verify_cmd to inject a session_id so all events go to ONE session
