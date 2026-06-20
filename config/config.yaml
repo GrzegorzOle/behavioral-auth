@@ -1,0 +1,79 @@
+general:
+  mode: dev
+  data_dir: "/var/lib/behavioral-auth"
+  log_level: "INFO"
+
+collector:
+  devices: []
+  include_builtin_only: false
+  batch_size: 200          # flush every 200 events (previously 4000)
+  flush_interval_sec: 1.0  # also flush every 1 second via background thread
+
+storage:
+  db_path: "/var/lib/behavioral-auth/behavior.duckdb"
+  parquet_dir: "/var/lib/behavioral-auth/parquet"
+  archive_after_days: 14
+  delete_after_days: 90
+
+features:
+  window_sec: 30
+  stride_sec: 5
+  min_keyboard_events: 12
+  min_mouse_events: 10
+  scaler_path: "/var/lib/behavioral-auth/scaler.json"
+  dedup_gap_sec: 2
+
+model:
+  seq_len: 24
+  input_dim: 21
+  hidden_dim: 24
+  num_layers: 3
+  kernel_size: 3
+  dropout: 0.10
+  batch_size: 128
+  epochs: 25
+  lr: 0.001
+  val_split: 0.2
+  model_path: "/var/lib/behavioral-auth/model.onnx"
+  metadata_path: "/var/lib/behavioral-auth/model_meta.json"
+
+inference:
+  interval_sec: 5
+  min_fused_windows: 24
+
+fusion:
+  behavioral_weight: 0.70
+  howdy_weight: 0.30
+  challenge_threshold: 0.55
+  lock_threshold: 0.78
+  unlock_threshold: 0.30
+  hysteresis: 0.04
+  cooldown_sec: 30
+
+howdy:
+  enabled: true
+  command: "/usr/bin/howdy test"
+  timeout_sec: 3
+  success_score: 0.05
+  fail_score: 0.85
+
+face:
+  # OpenCV face recognition – cross-platform, works with any USB/built-in camera.
+  # backend: 'opencv' = OpenCV LBPH  |  'howdy' = Linux howdy daemon
+  enabled: true
+  backend: "opencv"
+  camera_index: 0
+  model_path: "/var/lib/behavioral-auth/face_model.yml"
+  confidence_threshold: 80.0   # LBPH: lower = stricter (0-40 excellent, >100 unknown)
+  n_enroll_samples: 40
+  success_score: 0.05
+  fail_score: 0.85
+  timeout_sec: 5
+  show_preview: false
+
+actions:
+  lock_cmd: "loginctl lock-session"
+  notify_cmd: "notify-send -u critical 'Behavioral Auth' 'Anomaly detected, session locked'"
+
+timer:
+  feature_interval_sec: 60

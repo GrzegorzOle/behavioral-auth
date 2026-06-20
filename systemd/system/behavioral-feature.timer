@@ -1,0 +1,8 @@
+[Unit]
+Description=Behavioral Auth Feature Builder Timer
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60
+Persistent=true
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Behavioral Auth Collector
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/opt/behavioral-auth-v2/.venv/bin/python -m behavioral_auth collector
+Environment=PYTHONPATH=/opt/behavioral-auth-v2/src
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

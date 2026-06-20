@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "behavioral-auth"
+version = "0.2.0"
+description = "Local-only behavioral authentication for Linux"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+behavioral-collector = "behavioral_auth.cli.collector_cmd:main"
+behavioral-features  = "behavioral_auth.cli.features_cmd:main"
+behavioral-train     = "behavioral_auth.cli.train_cmd:main"
+behavioral-infer     = "behavioral_auth.cli.infer_cmd:main"
+behavioral-report    = "behavioral_auth.cli.report_cmd:main"
+behavioral-face      = "behavioral_auth.cli.face_cmd:main"
+behavioral-status    = "behavioral_auth.cli.status_cmd:main"
+behavioral-verify    = "behavioral_auth.cli.verify_cmd:main"

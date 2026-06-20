@@ -1,0 +1,15 @@
+[Unit]
+Description=Behavioral Auth Inference
+After=behavioral-collector.service graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/opt/behavioral-auth-v2/.venv/bin/python -m behavioral_auth infer
+Environment=PYTHONPATH=/opt/behavioral-auth-v2/src
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,6 @@
+[Unit]
+Description=Behavioral Auth Feature Builder
+[Service]
+Type=oneshot
+ExecStart=/opt/behavioral-auth-v2/.venv/bin/python -m behavioral_auth features
+Environment=PYTHONPATH=/opt/behavioral-auth-v2/src
