@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # The 21 features persisted per window. Order is significant: it defines the
 # column order of every feature vector written to feature_windows.
@@ -189,6 +189,52 @@ class FaceCfg(BaseModel):
     howdy_timeout_sec: int = 3
 
 
+class SiemCfg(BaseModel):
+    """Optional forwarding to a SIEM. Off by default — see the note below.
+
+    While `enabled` is false the daemon opens no socket at all, which is what
+    lets the README promise that nothing leaves the machine. Turning this on is
+    a deliberate act, and it is the only thing in the tree that talks to a
+    network.
+    """
+    enabled: bool = False
+    sink: str = 'syslog'                   # syslog | wazuh
+    ident: str = 'behavioral-auth'
+    facility: int = 10                     # authpriv
+    # sink: syslog
+    socket_path: str = '/dev/log'
+    # sink: wazuh — the manager's syslog listener
+    host: str = ''
+    port: int = 514
+    protocol: str = 'tcp'                  # udp | tcp
+    # An event sent over UDP is unacknowledged: the send "succeeds" whether or
+    # not anyone is listening, so the spool cannot protect it. Use tcp if the
+    # audit trail matters.
+
+    # With forwarding on, alarms need not also be kept in DuckDB. The alarm
+    # lifecycle is held in memory, so this changes nothing about detection —
+    # only `behavioral-report`, which then has no local alarms to print.
+    store_alarms_locally: bool = True
+
+    spool_path: str = '/var/lib/behavioral-auth/siem-spool.jsonl'
+    spool_max_events: int = 10_000
+    flush_interval_sec: int = 10
+
+    @field_validator('sink')
+    @classmethod
+    def _known_sink(cls, v: str) -> str:
+        if v not in ('syslog', 'wazuh'):
+            raise ValueError(f"siem.sink must be 'syslog' or 'wazuh', got {v!r}")
+        return v
+
+    @field_validator('protocol')
+    @classmethod
+    def _known_protocol(cls, v: str) -> str:
+        if v not in ('udp', 'tcp'):
+            raise ValueError(f"siem.protocol must be 'udp' or 'tcp', got {v!r}")
+        return v
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
     general: GeneralCfg
@@ -200,6 +246,7 @@ class Settings(BaseModel):
     learning: LearningCfg = LearningCfg()
     alarm: AlarmCfg = AlarmCfg()
     face: FaceCfg = FaceCfg()
+    siem: SiemCfg = SiemCfg()
 
 
 _SEARCH_PATHS = [

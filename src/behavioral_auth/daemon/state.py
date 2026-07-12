@@ -22,6 +22,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from behavioral_auth.siem import Category, NullForwarder, Severity
+
 
 class State(str, Enum):
     BOOTSTRAP = 'BOOTSTRAP'
@@ -81,8 +83,9 @@ def _now() -> datetime:
 class StateStore:
     """Owns the current state, its persistence and the state.json snapshot."""
 
-    def __init__(self, conn, run_dir: str):
+    def __init__(self, conn, run_dir: str, siem=None):
         self.conn = conn
+        self.siem = siem or NullForwarder()
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.state_file = self.run_dir / 'state.json'
@@ -146,6 +149,18 @@ class StateStore:
         self.snapshot.state = to.value
         self.snapshot.since = _now().isoformat()
         logger.info(f'{frm.value} → {to.value}  ({reason})')
+
+        self.siem.enrollment_id = self.enrollment_id
+        # `details` is deliberately NOT forwarded. It is a free-form dict written
+        # to the local database, and splatting it into the event would mean that
+        # whatever a future caller decides to put in it leaves the machine —
+        # silently, and without anyone revisiting this decision. What goes to a
+        # SIEM is an explicit, closed list of fields.
+        self.siem.emit(
+            Category.STATE, 'transition',
+            severity=Severity.ALERT if to is State.ALARM else Severity.NOTICE,
+            from_state=frm.value, to_state=to.value, reason=reason,
+        )
 
     def persist(self) -> None:
         """Rewrite daemon_state and the public snapshot atomically."""

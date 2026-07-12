@@ -27,6 +27,7 @@ from loguru import logger
 
 from behavioral_auth.config import Settings
 from behavioral_auth.inference.fusion import FaceState, Verdict
+from behavioral_auth.siem import Category, NullForwarder, Severity
 
 
 @dataclass
@@ -62,8 +63,9 @@ class Alarm:
 
 
 class MonitorController:
-    def __init__(self, cfg: Settings):
+    def __init__(self, cfg: Settings, siem=None):
         self.cfg = cfg
+        self.siem = siem or NullForwarder()
         self.anom = Run()
         self.norm = Run()
         self.face_stranger_streak = 0
@@ -160,28 +162,44 @@ class MonitorController:
 
     def raise_alarm(self, conn, enrollment_id: str, session_id: str, reason: str) -> Alarm:
         self.alarm = Alarm(alarm_id=str(uuid.uuid4()), reason=reason, started_at=time.time())
-        conn.execute(
-            'INSERT INTO alarms (alarm_id, enrollment_id, session_id, reason, peak_ratio, n_scores) '
-            'VALUES (?, ?, ?, ?, ?, ?)',
-            [self.alarm.alarm_id, enrollment_id, session_id, reason, self.last_ratio or 0.0, 0],
-        )
+        if self.siem.store_alarms_locally():
+            conn.execute(
+                'INSERT INTO alarms (alarm_id, enrollment_id, session_id, reason, peak_ratio, n_scores) '
+                'VALUES (?, ?, ?, ?, ?, ?)',
+                [self.alarm.alarm_id, enrollment_id, session_id, reason, self.last_ratio or 0.0, 0],
+            )
         detail = (f'behaviour deviates from the learned pattern for '
                   f'{self.anom.span_sec:.0f}s (ratio up to {self.last_ratio:.2f}x threshold)'
                   if reason == 'behavioral'
                   else 'the camera does not recognise the person at the keyboard')
         logger.error(f'ALARM: {detail}. No action taken — this system never locks the session.')
+        self.siem.emit(
+            Category.ALARM, 'raised', severity=Severity.ALERT,
+            alarm_id=self.alarm.alarm_id, reason=reason,
+            ratio=round(self.last_ratio or 0.0, 3),
+            span_sec=round(self.anom.span_sec, 1),
+            face_state=self.face_state.value,
+            summary=detail,
+        )
         self.notify()
         return self.alarm
 
     def clear_alarm(self, conn) -> None:
         if not self.alarm:
             return
-        conn.execute(
-            'UPDATE alarms SET ended_at = now(), peak_ratio = ?, n_scores = ? WHERE alarm_id = ?',
-            [self.alarm.peak_ratio, self.alarm.n_scores, self.alarm.alarm_id],
-        )
+        if self.siem.store_alarms_locally():
+            conn.execute(
+                'UPDATE alarms SET ended_at = now(), peak_ratio = ?, n_scores = ? WHERE alarm_id = ?',
+                [self.alarm.peak_ratio, self.alarm.n_scores, self.alarm.alarm_id],
+            )
         held = time.time() - self.alarm.started_at
         logger.info(f'Alarm cleared after {held:.0f}s — behaviour matches the pattern again')
+        self.siem.emit(
+            Category.ALARM, 'cleared', severity=Severity.NOTICE,
+            alarm_id=self.alarm.alarm_id, reason=self.alarm.reason,
+            held_sec=round(held, 1), peak_ratio=round(self.alarm.peak_ratio, 3),
+            n_scores=self.alarm.n_scores,
+        )
         self.alarm = None
 
     def notify(self) -> None:

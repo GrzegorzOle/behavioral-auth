@@ -39,6 +39,7 @@ from behavioral_auth.face.recognizer import FaceRecognizer
 from behavioral_auth.features.pipeline import build_feature_windows, build_sequences
 from behavioral_auth.inference import runtime
 from behavioral_auth.inference.fusion import FaceState, Verdict, classify, display_score
+from behavioral_auth.siem import Category, Forwarder, Severity
 from behavioral_auth.training import dataset
 
 
@@ -54,12 +55,13 @@ class Daemon:
         self.writer: Writer | None = None
         self.console = Console(cfg.daemon.console)
         self.learn = LearningController(cfg)
-        self.monitor = MonitorController(cfg)
+
+        self.session_id = str(uuid.uuid4())
+        self.siem = Forwarder(cfg, session_id=self.session_id)
+        self.monitor = MonitorController(cfg, siem=self.siem)
 
         self.train_pool = ThreadPoolExecutor(1, thread_name_prefix='train')
         self.face_pool = ThreadPoolExecutor(1, thread_name_prefix='face')
-
-        self.session_id = str(uuid.uuid4())
         self.pattern: runtime.Pattern | None = None
         self.tasks: list[asyncio.Task] = []
         self.source: SyntheticSource | None = None
@@ -84,7 +86,8 @@ class Daemon:
 
         try:
             self.conn = open_db(self.cfg)          # creates + migrates on first run
-            self.store = StateStore(self.conn, self.cfg.daemon.run_dir)
+            self.store = StateStore(self.conn, self.cfg.daemon.run_dir, siem=self.siem)
+            self.siem.emit(Category.OPS, 'daemon_started', mode=self.cfg.general.mode)
             self.writer = Writer(self.conn, self.cfg.collector.batch_size)
             self._bootstrap()
             self._start_sources()
@@ -173,6 +176,8 @@ class Daemon:
             self.conn.execute(
                 'UPDATE sessions SET ended_at = now() WHERE session_id = ?', [self.session_id])
             self.store.mark_stopped()
+        self.siem.emit(Category.OPS, 'daemon_stopped')
+        self.siem.close()                          # one last drain, then report a backlog
         if self.conn:
             self.conn.close()
         self.console.close()
@@ -202,6 +207,7 @@ class Daemon:
         elif self.store.state in (State.MONITORING, State.ALARM):
             await self._tick_monitoring(eid)
 
+        self.siem.flush()
         self._update_snapshot(eid)
         self.store.persist()
         self.console.render(self.store.snapshot)
@@ -411,6 +417,12 @@ class Daemon:
     def _apply(self, req: control.Request) -> tuple[bool, str]:
         cmd = req.cmd
         if cmd == 'reset':
+            # The pattern is how the daemon knows who the owner is. Discarding it
+            # is the one operation that makes the system forget — a SIEM wants to
+            # hear about it whether or not it was the owner who asked.
+            self.siem.emit(Category.OPS, 'pattern_reset', severity=Severity.WARNING,
+                           purge_data=bool(req.args.get('purge_data', False)),
+                           previous_enrollment=self.store.enrollment_id)
             msg = commands.reset(self.conn, self.cfg, req.args.get('purge_data', False))
             self.pattern = None
             self.learn.reset()
@@ -423,6 +435,7 @@ class Daemon:
             return True, msg
 
         if cmd == 'learn-more':
+            self.siem.emit(Category.OPS, 'learn_more', severity=Severity.WARNING)
             msg = commands.learn_more(self.conn, self.cfg)
             self.learn.stable_streak = 0
             self.learn.last_cycle_at = 0.0
@@ -432,10 +445,13 @@ class Daemon:
             return True, msg
 
         if cmd == 'pause':
+            # Pausing stops scoring, so it is a window in which nothing is watched.
+            self.siem.emit(Category.OPS, 'paused', severity=Severity.WARNING)
             self.store.transition(State.PAUSED, 'paused by user')
             return True, 'Wstrzymano. Zbieranie danych trwa, punktacja nie.'
 
         if cmd == 'resume':
+            self.siem.emit(Category.OPS, 'resumed')
             target = State.MONITORING if self.pattern else State.LEARNING
             self.store.transition(target, 'resumed by user')
             return True, f'Wznowiono w stanie {target.value}.'

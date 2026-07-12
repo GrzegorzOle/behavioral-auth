@@ -7,7 +7,9 @@ It **never locks the session and never logs anyone out.** The strongest thing it
 does is write a warning to the log, the console, and (optionally) a desktop
 notification. That is a deliberate design constraint, not an unfinished feature.
 
-Everything runs on your machine: DuckDB on disk, ONNX on the CPU, no network.
+Everything runs on your machine: DuckDB on disk, ONNX on the CPU, and no network
+unless you switch on SIEM forwarding yourself — see [What leaves the
+machine](#what-leaves-the-machine).
 
 ---
 
@@ -70,6 +72,49 @@ unknown face is treated as *no evidence*, never as evidence of an intruder.
 
 Treat this as a tripwire that notices when something has changed. Do not treat it
 as an access-control mechanism.
+
+---
+
+## What leaves the machine
+
+**By default: nothing.** With `siem.enabled: false` — which is the shipped setting
+— no code path in this tree opens a socket. The behaviour you record, the model
+trained on it and the photographs of your face stay in `/var/lib/behavioral-auth`
+and are read by nothing but this daemon.
+
+You can turn on forwarding to a SIEM (local syslog, or straight to a Wazuh
+manager). If you do, this is the complete list of what is sent:
+
+| Sent | Never sent |
+|---|---|
+| Alarms: raised and cleared, with `reason`, `ratio` (a number like `4.54`), how long they ran | Key codes, key names, anything you typed |
+| State transitions: `LEARNING → MONITORING → ALARM`, and why | Mouse coordinates or movement |
+| Operations: daemon start/stop, `pause`, `learn-more`, and `reset` | Photographs of your face, or any frame from the camera |
+| Whether the camera matched, as the word `match`, `stranger` or `unknown` | Feature vectors, sequences, model weights, the scaler, the threshold |
+| The hostname, and the enrolment/session UUIDs | Per-sequence scores — at a 5 s stride that is hundreds an hour |
+
+The event carries a **verdict and a number, never the behaviour they were computed
+from.** `StateStore.transition` takes a free-form `details` dict for the local
+database; it is deliberately *not* forwarded, so that a field added there later
+cannot start leaving the machine without someone deciding that it should.
+
+### The local copy is not as gone as it looks
+
+`siem.store_alarms_locally: false` stops alarms being written to DuckDB. It does
+**not** make them stop existing locally:
+
+- With `sink: syslog`, the event is handed to `/dev/log`, so it also lands in
+  **journald or rsyslog on this same machine**, and stays there for as long as
+  your system's log retention says. You removed one local copy, not all of them.
+- Undelivered events wait in the **disk spool** (`siem.spool_path`) until the SIEM
+  acknowledges them. If the SIEM is unreachable for a day, that is a day of alarms
+  sitting in a file. They are removed once delivered.
+
+If you want no local trace of alarms at all, `sink: wazuh` sends them over the
+network without going through the local syslog — and even then the spool holds
+whatever could not be delivered. There is no configuration in which an event both
+survives a broken link and leaves no local trace; those two wishes contradict each
+other, and this daemon picks *not losing the event*.
 
 ---
 

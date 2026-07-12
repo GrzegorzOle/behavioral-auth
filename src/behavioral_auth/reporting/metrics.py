@@ -68,15 +68,21 @@ def _print(conn, cfg) -> None:
         print(f'  odchylenie od progu: średnio {avg:.2f}x, maksymalnie {mx:.2f}x')
         print(f'  ocenionych jako anomalne: {anom} ({anom / n * 100:.1f}%)')
 
-    alarms = conn.execute(
-        'SELECT started_at, ended_at, reason, peak_ratio, n_scores '
-        'FROM alarms WHERE enrollment_id = ? ORDER BY started_at DESC LIMIT 10', [eid]
-    ).fetchall()
-    print(f'\nAlarmy: {len(alarms)}')
-    for started, ended, reason, peak, n in alarms:
-        span = f'{(ended - started).total_seconds():.0f}s' if ended else 'trwa'
-        print(f'  {started:%Y-%m-%d %H:%M}  powód={reason}  szczyt={peak:.2f}x  '
-              f'czas={span}  ({n} wyników)')
+    if cfg.siem.enabled and not cfg.siem.store_alarms_locally:
+        # An empty list here would read as "nothing happened", which is a lie the
+        # report must not tell: the alarms exist, they are just not here.
+        print(f'\nAlarmy: nie są przechowywane lokalnie (siem.store_alarms_locally: false).'
+              f'\n  Szukaj ich w SIEM-ie — sink={cfg.siem.sink}.')
+    else:
+        alarms = conn.execute(
+            'SELECT started_at, ended_at, reason, peak_ratio, n_scores '
+            'FROM alarms WHERE enrollment_id = ? ORDER BY started_at DESC LIMIT 10', [eid]
+        ).fetchall()
+        print(f'\nAlarmy: {len(alarms)}')
+        for started, ended, reason, peak, n in alarms:
+            span = f'{(ended - started).total_seconds():.0f}s' if ended else 'trwa'
+            print(f'  {started:%Y-%m-%d %H:%M}  powód={reason}  szczyt={peak:.2f}x  '
+                  f'czas={span}  ({n} wyników)')
 
     print('\nCzego tu NIE ma: wskaźników FAR/FRR. Nie da się ich policzyć — system '
           'widział\ndane tylko jednej osoby, więc nie ma z czym ich porównać.\n')
