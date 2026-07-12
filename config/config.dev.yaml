@@ -1,13 +1,34 @@
-general:
-  mode: dev
+# Development overlay, deep-merged on top of config.yaml when general.mode == dev.
+# Shrinks every gate so the full BOOTSTRAP -> LEARNING -> MONITORING -> ALARM
+# path can be walked in minutes instead of hours.
 
-# Reduced parameters for dev – fast pipeline testing
 features:
-  window_sec: 15          # 15s window instead of 30s
-  stride_sec: 3           # 3s stride instead of 5s
-  min_keyboard_events: 3  # less strict threshold
+  window_sec: 10
+  stride_sec: 2
+  min_keyboard_events: 3
   min_mouse_events: 3
+  max_seq_gap_sec: 20
 
 model:
-  seq_len: 8     # shorter sequence (was 24)
-  epochs: 10     # fewer epochs (was 25)
+  seq_len: 8
+  epochs: 10
+
+learning:
+  cycle_min_sec: 30
+  cycle_min_new_sequences: 20
+  min_sequences: 60
+  min_active_minutes: 2
+  min_distinct_hours: 1
+  stable_consecutive_cycles: 2
+
+alarm:
+  enter_consecutive: 4
+  enter_min_span_sec: 20
+  clear_consecutive: 4
+  clear_min_span_sec: 20
+
+face:
+  min_samples: 12
+  sample_interval_sec: 5
+  retrain_every_n_samples: 6
+  check_interval_sec: 10

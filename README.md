@@ -1,341 +1,236 @@
 # behavioral-auth
 
-A local-only **behavioural authentication** stack for Linux (and Windows via OpenCV).
-It continuously profiles your typing and mouse patterns, detects anomalies with an
-ONNX autoencoder, and optionally adds face verification via OpenCV LBPH or Linux howdy.
+A local-only daemon that learns how **you** type and move the mouse, freezes that
+pattern, and then warns you when the person at the keyboard stops matching it.
+
+It **never locks the session and never logs anyone out.** The strongest thing it
+does is write a warning to the log, the console, and (optionally) a desktop
+notification. That is a deliberate design constraint, not an unfinished feature.
+
+Everything runs on your machine: DuckDB on disk, ONNX on the CPU, no network.
 
 ---
 
-## Platform Support
-
-| Feature | Fedora / RHEL | Ubuntu / Debian | Windows 10/11 |
-|---------|:---:|:---:|:---:|
-| `behavioral-collector` (evdev) | ✅ | ✅ | ❌ evdev not available |
-| `behavioral-features` | ✅ | ✅ | ✅ (with existing DB) |
-| `behavioral-train` | ✅ | ✅ | ✅ |
-| `behavioral-infer` | ✅ | ✅ | ✅ |
-| `behavioral-verify` (live dashboard) | ✅ | ✅ | ❌ requires collector |
-| `behavioral-face` (OpenCV LBPH) | ✅ | ✅ | ✅ |
-| howdy backend (IR camera) | ✅ | ✅ | ❌ Linux only |
-| systemd services / timers | ✅ | ✅ | ❌ use Task Scheduler |
-
-> **Windows users:** only face enrolment/verification and inference on
-> pre-collected data are supported.  Use a Linux machine or WSL2 for the
-> collection step, then copy the DuckDB file over.
-
----
-
-## Architecture
+## What it actually does
 
 ```
-keyboard / mouse
-      │
-      ▼
- behavioral-collector          ← evdev event capture (Linux only)
-      │ raw_events (DuckDB)
-      ▼
- behavioral-features           ← 21-feature windows + sliding sequences
-      │ fused_sequences (DuckDB)
-      ▼
- behavioral-train              ← Conv1D autoencoder → ONNX export
-      │ model.onnx + scaler.json
-      ▼
- behavioral-infer              ← reconstruction error → anomaly score
-      │                           fused with face score
-      ▼
- behavioral-verify             ← live dashboard (collection + scoring)
+first start, empty machine
+        │
+        ▼
+   ┌─────────┐   collects keystroke + mouse behaviour,
+   │  NAUKA  │   silently photographs your face in the background,
+   │LEARNING │   retrains every so often and checks whether the
+   └────┬────┘   pattern has stopped moving
+        │
+        │  ... enough data + N stable cycles in a row + sanity gate
+        ▼
+   ┌────────────┐   pattern is FROZEN. Scores live behaviour against it.
+   │   NADZÓR   │   Nothing retrains here — a stranger cannot teach the
+   │ MONITORING │   system to accept them just by using the computer.
+   └────┬───────┘
+        │  ... behaviour deviates, and keeps deviating
+        ▼
+   ┌─────────┐   logs, prints, notifies. Locks nothing.
+   │  ALARM  │   Clears itself when normal behaviour returns.
+   └─────────┘
 ```
 
----
-
-## Requirements
-
-| Dependency | Version | Notes |
-|------------|---------|-------|
-| Python | 3.11+ | 3.11 recommended (torch/onnxruntime) |
-| PyTorch | ≥ 2.4 | CPU-only build works fine |
-| ONNX Runtime | ≥ 1.19 | |
-| OpenCV (contrib) | ≥ 4.10 | `opencv-contrib-python` on pip |
-| DuckDB | ≥ 0.10 | embedded, no server needed |
-| evdev | ≥ 1.7 | **Linux only** – omitted on Windows |
+The pattern only ever changes when **you** say so — `behavioral-auth reset`
+(someone else is going to use this machine) or `behavioral-auth learn-more`
+(refine what you have). There is no automatic adaptation anywhere in the code.
 
 ---
 
-## Installation
+## Be clear about what this can and cannot tell you
 
-### Fedora / RHEL
+This matters more than any feature, so it comes before the install instructions.
+
+**There is no impostor data.** The system only ever sees one person: you. That
+has hard consequences:
+
+- **No false-accept rate can be measured.** Not by this system, not by any
+  amount of tuning. `behavioral-report` deliberately refuses to print FAR/FRR
+  figures — an earlier version computed them from your own scores, which made a
+  meaningless number look like a security metric.
+- What the promotion gate *does* verify: (1) the pattern has **converged** — the
+  model reconstructs fresh, never-trained-on behaviour as well as it does its
+  training data, and the threshold has stopped moving; (2) the model is **not
+  degenerate** — it reliably flags synthetic impostors built by distorting your
+  own data. That second check is not a formality. An autoencoder handed its own
+  target learns to copy it, scores a beautiful, stable, low error for *every
+  human alive*, and would never fire on anyone. The gate exists to catch exactly
+  that, and during development it caught it.
+- The promotion message says all of this out loud, including which kinds of
+  difference the trained model turned out to be **blind** to.
+
+**Face recognition is a corroborating signal, not a gate.** LBPH is trained with
+a single label, so it can only answer "how confident am I that this is the
+enrolled person" — the calibrated confidence cut-off is the entire decision. An
+unknown face is treated as *no evidence*, never as evidence of an intruder.
+
+Treat this as a tripwire that notices when something has changed. Do not treat it
+as an access-control mechanism.
+
+---
+
+## Install
+
+Requires Python 3.11+, and membership of the `input` group (to read the keyboard)
+and `video` group (for the camera).
 
 ```bash
-# 1. Clone and enter project directory
 git clone <repo-url> behavioral-auth && cd behavioral-auth
+make venv
 
-# 2. Run the Fedora installer (installs to /opt/behavioral-auth-v2)
-sudo bash src/scripts/fedora-install.sh
-
-# 3. Or – developer install inside a local venv:
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
-python src/scripts/bootstrap_db.py
+sudo usermod -aG input,video "$USER"   # then log out and back in
 ```
 
-### Ubuntu / Debian
-
-```bash
-# 1. Clone and enter project directory
-git clone <repo-url> behavioral-auth && cd behavioral-auth
-
-# 2. Run the Ubuntu installer (requires sudo, installs to /opt/behavioral-auth-v2)
-sudo bash src/scripts/ubuntu-install.sh
-
-# 3. Or – developer install inside a local venv:
-# Install system packages first
-sudo apt-get update
-sudo apt-get install -y python3.11 python3.11-venv python3.11-dev \
-     build-essential libgtk-3-dev libv4l-dev
-
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
-python src/scripts/bootstrap_db.py
-
-# Add current user to the input group (required for evdev)
-sudo usermod -aG input "$USER"
-# Then log out/in, or use: newgrp input
-```
-
-### Windows 10 / 11
-
-```powershell
-# 1. Clone and enter project directory
-git clone <repo-url> behavioral-auth
-cd behavioral-auth
-
-# 2. Allow script execution (current session only)
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-
-# 3. Run the Windows installer (requires Administrator)
-.\src\scripts\windows-install.ps1
-
-# 4. Or – manual install:
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements-windows.txt   # evdev excluded
-pip install -e .
-python src\scripts\bootstrap_db.py
-```
-
-> **Note:** Python 3.11 must be installed separately from
-> [python.org](https://www.python.org/downloads/).
+Fedora/RHEL and Ubuntu/Debian system installers live in `src/scripts/`.
 
 ---
 
-## Quick Start
-
-### Linux (full pipeline)
+## Run
 
 ```bash
-# Step 1 – Collect data (minimum 15 minutes of normal use)
-sg input -c "behavioral-collector"
-# Press Ctrl+C to stop
-
-# Step 2 – Extract features
-behavioral-features
-
-# Step 3 – Train the model (force CPU if GPU is unsupported)
-CUDA_VISIBLE_DEVICES="" behavioral-train
-
-# Step 4 – Live verification dashboard
-behavioral-verify --duration 120 --no-face
-
-# Step 5 – Enroll face (optional)
-behavioral-face enroll
-behavioral-verify --duration 120
+behavioral-authd          # that's it — creates the database, starts learning
 ```
 
-### Windows (face + inference only)
+No schema step, no manual enrolment, no pipeline to run by hand. On a machine
+with nothing on it, the daemon creates the database, applies its migrations,
+opens an enrollment and starts collecting. The console shows where it is:
 
-```powershell
-# Activate venv
-.\.venv\Scripts\Activate.ps1
-
-# Enroll face
-behavioral-face enroll --samples 40
-
-# Verify face
-behavioral-face verify --preview
-
-# If you have a DuckDB file from Linux, run inference
-behavioral-infer
 ```
+╭─ behavioral-auth ───────────────────────────── NAUKA ─╮
+│ wzorzec 3f9a1c2b   czas 01:42:07                      │
+│ sekwencje   842/1200  [████████████░░░░░░]            │
+│ aktywność    64m/90m  [█████████████░░░░░]  godzin 2/3│
+│ twarz        48/60    [███████████████░░░]            │
+│ cykl 3  seria stabilnych 1/3                          │
+│ ✓ pass_rate 0.94  err_ratio 1.31  separacja 4.2x      │
+╰───────────────────────────────────────────────────────╯
+```
+
+Under systemd there is no console and everything goes to the journal:
+
+```bash
+systemctl --user enable --now behavioral-authd
+journalctl --user -fu behavioral-authd
+```
+
+### Try the whole thing in two minutes
+
+Learning normally takes hours of real use, and testing the alarm would take a
+second person. So there is a synthetic input source that runs on an accelerated
+clock (refused in `prod` mode):
+
+```bash
+make demo        # behavioral-authd --synthetic-input user --synthetic-speed 40
+```
+
+Watch it learn, converge, promote, and switch to MONITORING. Then, in another
+terminal, put a different person at the keyboard:
+
+```bash
+python -c "from behavioral_auth.daemon import control; \
+           control.send('/var/lib/behavioral-auth/run','set-profile',{'profile':'impostor'})"
+```
+
+The deviation climbs past the threshold, and once it *stays* there, ALARM.
 
 ---
 
-## CLI Reference
+## Commands
 
-| Command | Platform | Description |
-|---------|----------|-------------|
-| `behavioral-collector` | Linux | Capture keyboard/mouse events to DuckDB |
-| `behavioral-features` | All | Extract feature windows and sequences |
-| `behavioral-train` | All | Train the ONNX autoencoder |
-| `behavioral-infer` | All | Run one inference cycle |
-| `behavioral-infer --loop` | All | Continuous inference loop |
-| `behavioral-verify` | Linux | Live dashboard: collect + score |
-| `behavioral-face enroll` | All | Capture face samples and train LBPH model |
-| `behavioral-face verify` | All | One-shot face verification |
-| `behavioral-face info` | All | Show face model status |
-| `behavioral-face delete` | All | Remove trained face model |
-| `behavioral-status` | All | Full pipeline status report |
-| `behavioral-report` | All | Print decision metrics (FAR/FRR) |
+| Command | What it does |
+|---|---|
+| `behavioral-authd` | The daemon. Learns, then watches. |
+| `behavioral-auth status` | Current state and progress. Works while the daemon runs. |
+| `behavioral-auth reset` | **Somebody else will use this machine.** Destroys the pattern and all face crops, starts learning from zero. |
+| `behavioral-auth learn-more` | Refine the existing pattern with more data. Explicit, never automatic. |
+| `behavioral-auth pause` / `resume` | Stop/start scoring (collection continues). |
+| `behavioral-report` | Learning cycles, scores, alarms. No FAR/FRR — see above. |
+| `behavioral-face info` / `verify` | Inspect and test the face pattern the daemon built. |
 
----
-
-## Face Verification
-
-Two backends are supported:
-
-### OpenCV LBPH (cross-platform)
-
-Works on Linux and Windows with any USB/built-in camera.
-
-```bash
-# Enroll (live camera window, collect 40 samples)
-behavioral-face enroll --samples 40
-
-# Verify
-behavioral-face verify --preview
-
-# Incremental update (add more samples without retraining from scratch)
-behavioral-face enroll --update --samples 20
-```
-
-**LBPH confidence scale** (lower = better match):
-
-| Confidence | Quality |
-|------------|---------|
-| 0 – 40 | Excellent match |
-| 40 – 80 | Good match ✅ |
-| 80 – 100 | Borderline |
-| > 100 | No match / unknown person |
-
-### howdy (Linux only)
-
-Uses the IR camera-based howdy daemon.
-
-```yaml
-# config/config.yaml
-face:
-  enabled: true
-  backend: "howdy"
-```
+The daemon holds DuckDB's single write lock for its whole life, so the CLI talks
+to it through a control spool rather than the database. When no daemon is
+running, the same commands operate on the database directly.
 
 ---
 
 ## Configuration
 
-Main config: `config/config.yaml`
-Dev overrides: `config/config.dev.yaml` (merged automatically in `mode: dev`)
+`config/config.yaml`, with a `config.<mode>.yaml` overlay merged on top
+(`config.dev.yaml` shrinks every gate so a full run takes minutes). Point
+`BEHAVIORAL_AUTH_CONFIG` at a file to override the search path.
 
-Key sections:
+The knobs that decide behaviour:
 
 ```yaml
-general:
-  mode: dev          # dev | enforce
+learning:
+  min_sequences: 1200           # roughly 2-4 h of real, active use
+  min_active_minutes: 90        # summed window coverage, not wall-clock
+  min_distinct_hours: 3         # you must be seen across the day, not one burst
+  stable_consecutive_cycles: 3
+  stability:
+    false_alarm_max: 0.02       # never promote a pattern that would flag YOU
+    sanity_detection_min: 0.90  # ...or one that detects nobody at all
 
-features:
-  window_sec: 30     # sliding window duration
-  stride_sec: 5      # window stride
-
-model:
-  seq_len: 24        # sequence length fed to autoencoder
-  epochs: 25
-
-fusion:
-  behavioral_weight: 0.7
-  howdy_weight: 0.3
-  challenge_threshold: 0.55   # fused score >= this -> CHALLENGE
-  lock_threshold: 0.78        # fused score >= this -> LOCK
+alarm:
+  enter_consecutive: 16         # a burst of scores is not a sustained anomaly:
+  enter_min_span_sec: 120       # adjacent sequences overlap, so span matters too
+  clear_consecutive: 16
+  clear_min_span_sec: 120
 
 face:
   enabled: true
-  backend: "opencv"            # opencv | howdy
-  camera_index: 0
-  confidence_threshold: 80.0  # LBPH cut-off (lower = stricter)
+  confidence_threshold: auto    # calibrated from your own held-out crops
+  keep_samples: true            # crops stay in face_samples/, 0700, wiped on reset
 ```
+
+There is no `lock_cmd` and no `enforce` mode. They were removed from the code,
+not just disabled in the config.
 
 ---
 
-## Decision Logic
+## Privacy
 
-| Fused score | Mode `dev` | Mode `enforce` |
-|-------------|-----------|----------------|
-| `< challenge` | SIMULATE_ALLOW | ALLOW |
-| `>= challenge` | SIMULATE_CHALLENGE | CHALLENGE |
-| `>= lock` | SIMULATE_CHALLENGE | LOCK (runs lock_cmd) |
+Everything stays on the machine. Two things are worth knowing:
 
----
-
-## Running Tests
-
-```bash
-source .venv/bin/activate      # Linux
-# .\.venv\Scripts\Activate.ps1  # Windows
-pytest tests/ -v
-```
+- **Keystroke *codes* are recorded**, along with their timings — enough to know
+  you pressed key 30, not which character your layout maps it to, but treat
+  `behavior.duckdb` as sensitive anyway.
+- **Face crops are stored** in `face_samples/<enrollment>/` (0700, 150×150
+  greyscale) so the confidence threshold can be recalibrated without a fresh
+  enrolment. Set `face.keep_samples: false` to keep only the trained model, or
+  `face.enabled: false` to never open the camera. `behavioral-auth reset` deletes
+  them.
 
 ---
 
-## systemd Services (Linux)
+## Platform support
 
-```bash
-# User-level services (collector + inference)
-systemctl --user daemon-reload
-systemctl --user enable --now behavioral-collector.service
-systemctl --user enable --now behavioral-inference.service
-
-# System-level feature-extraction timer (runs every 60 s)
-sudo bash src/scripts/timer-install.sh
-```
-
-> **Windows equivalent:** use Task Scheduler to run
-> `behavioral-features` and `behavioral-infer` on a schedule.
+**Linux only.** Collection is built on `evdev`, and without collection there is
+nothing for the rest of the system to do — the face model can only be enrolled by
+the daemon while it learns, so a face-only Windows install would have no pattern
+to verify against. The previous partial Windows support was removed rather than
+left in place to mislead. Use Linux, or WSL2 with passthrough to `/dev/input`.
 
 ---
 
-## Project Structure
+## Layout
 
 ```
-behavioral-auth/
-├── config/                    - YAML configuration files
-│   ├── config.yaml            - production defaults
-│   └── config.dev.yaml        - development overrides
-├── db/
-│   ├── schema.sql             - DuckDB schema
-│   └── migrations/            - incremental schema migrations
-├── src/behavioral_auth/
-│   ├── cli/                   - CLI entry points (argparse)
-│   ├── collector/             - evdev capture + DuckDB writer (Linux)
-│   ├── face/                  - OpenCV LBPH detector / recognizer / enroll / verify
-│   ├── features/              - keystroke, mouse, context feature extraction
-│   ├── inference/             - ONNX runtime, score fusion, decision engine
-│   ├── models/                - Conv1D autoencoder (PyTorch) + ONNX export
-│   ├── reporting/             - FAR/FRR metrics
-│   └── training/              - dataset loader, threshold calculation, train loop
-├── src/scripts/
-│   ├── bootstrap_db.py        - initialise DuckDB schema
-│   ├── fedora-install.sh      - Fedora/RHEL system installer
-│   ├── ubuntu-install.sh      - Ubuntu/Debian system installer
-│   ├── windows-install.ps1    - Windows PowerShell installer
-│   └── timer-install.sh       - systemd feature-extraction timer (Linux)
-├── systemd/                   - systemd unit files
-├── requirements.txt           - Linux dependencies (includes evdev)
-├── requirements-windows.txt   - Windows dependencies (no evdev)
-└── tests/                     - pytest unit tests
+src/behavioral_auth/
+├── daemon/      state machine, learning controller, alarm logic, control channel
+├── collector/   evdev capture + a synthetic source for testing
+├── features/    incremental window and sequence extraction
+├── models/      Conv1D autoencoder with a bottleneck
+├── training/    dataset scoping, fitting, promotion gates, threshold calibration
+├── inference/   ONNX scoring, behavioural/face channel rules
+├── face/        silent LBPH enrolment, quality gates, calibration
+├── reporting/   what was observed
+└── db/          DuckDB access + schema migrations
 ```
-
----
 
 ## License
 

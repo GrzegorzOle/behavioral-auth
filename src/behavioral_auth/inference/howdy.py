@@ -1,30 +1,32 @@
-"""Howdy face-recognition backend (Linux only).
+"""howdy face-verification backend (Linux, IR camera).
 
-Invokes the howdy CLI tool and maps its return code to an anomaly score:
-  rc == 0  → face recognised → success_score (low, ~0.05)
-  rc != 0  → not recognised  → fail_score    (high, ~0.85)
+Shells out to the howdy CLI and maps its exit code onto a FaceState. A
+non-zero exit means howdy did not recognise the face; a timeout or a missing
+binary means we learned nothing, which is UNKNOWN — not evidence of an
+intruder.
 """
 
+from __future__ import annotations
+
 import subprocess
-from behavioral_auth.config import load_settings
+
+from loguru import logger
+
+from behavioral_auth.config import Settings
+from behavioral_auth.inference.fusion import FaceState
 
 
-def howdy_score() -> float:
-    """Run howdy and return a float anomaly score.
-
-    Returns 0.5 (neutral) when howdy is disabled in config.
-    Returns fail_score on timeout or any subprocess error.
-    """
-    cfg = load_settings()
-    if not cfg.howdy.enabled:
-        return 0.5
+def howdy_state(cfg: Settings) -> FaceState:
     try:
         rc = subprocess.run(
-            cfg.howdy.command, shell=True,
-            timeout=cfg.howdy.timeout_sec,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            cfg.face.howdy_command, shell=True,
+            timeout=cfg.face.howdy_timeout_sec,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         ).returncode
-        return cfg.howdy.success_score if rc == 0 else cfg.howdy.fail_score
-    except Exception:
-        return cfg.howdy.fail_score
+    except subprocess.TimeoutExpired:
+        logger.debug('howdy timed out')
+        return FaceState.UNKNOWN
+    except Exception as exc:
+        logger.warning(f'howdy failed: {exc}')
+        return FaceState.UNKNOWN
+    return FaceState.MATCH if rc == 0 else FaceState.STRANGER

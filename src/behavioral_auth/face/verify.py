@@ -1,103 +1,60 @@
-"""Face verification via OpenCV camera.
+"""Face verification during MONITORING.
 
-Returns an *anomaly score* in the same semantic as howdy_score():
-  low score  → face recognised  → user is legitimate
-  high score → no match / error → treat as anomaly
+Returns a FaceState, never a score. The distinction that matters is between
+"the camera saw someone else" (STRANGER — evidence) and "the camera told us
+nothing" (UNKNOWN — no evidence). The old code collapsed both into a numeric
+score and blended it into the decision, so a dark room or a camera held by
+another app quietly pushed the system toward an alarm.
 """
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
-import cv2
 from loguru import logger
 
-from behavioral_auth.face.gui import ensure_display
+from behavioral_auth.config import Settings
+from behavioral_auth.face.calibrate import load_face_meta
+from behavioral_auth.face.camera import grab_frames
 from behavioral_auth.face.detector import FaceDetector
 from behavioral_auth.face.recognizer import ENROLLED_LABEL, FaceRecognizer
+from behavioral_auth.inference.fusion import FaceState
 
 
-def opencv_face_score(
-    model_path: str,
-    camera_index: int = 0,
-    confidence_threshold: float = 80.0,
-    success_score: float = 0.05,
-    fail_score: float = 0.85,
-    max_attempts: int = 8,
-    show_preview: bool = False,
-) -> float:
-    """Capture a frame, detect a face, run LBPH predict.
+def check(cfg: Settings, max_frames: int = 8) -> tuple[FaceState, float | None]:
+    """One face check. Blocking; run in a worker thread.
 
-    Args:
-        model_path:           Path to trained LBPH model (.yml).
-        camera_index:         OpenCV camera index.
-        confidence_threshold: LBPH confidence cut-off (lower = stricter).
-                              Predictions ≤ threshold → match.
-        success_score:        Anomaly score when face is recognised.
-        fail_score:           Anomaly score when face is NOT recognised or
-                              on any error.
-        max_attempts:         How many frames to try before giving up.
-        show_preview:         Show live window during verification.
-
-    Returns:
-        Float anomaly score.
+    Returns (state, confidence). Confidence is None when no face was seen.
     """
-    if not Path(model_path).exists():
-        logger.warning("Face model not found – run 'behavioral-face enroll' first")
-        return 0.5  # neutral: no model yet, don't penalise
+    if not cfg.face.enabled:
+        return FaceState.UNKNOWN, None
+
+    if cfg.face.backend == 'howdy':
+        from behavioral_auth.inference.howdy import howdy_state
+        return howdy_state(cfg), None
+
+    if not Path(cfg.face.model_path).exists():
+        return FaceState.UNKNOWN, None
+
+    meta = load_face_meta(cfg)
+    if not meta:
+        return FaceState.UNKNOWN, None
+    threshold = float(meta['threshold'])
+
+    recognizer = FaceRecognizer(cfg.face.model_path)
+    if not recognizer.is_trained:
+        return FaceState.UNKNOWN, None
 
     detector = FaceDetector()
-    recognizer = FaceRecognizer(model_path)
+    for frame in grab_frames(cfg.face.camera_index, n=max_frames):
+        _, crop = detector.largest_face(frame)
+        if crop is None:
+            continue
+        label, confidence = recognizer.predict(crop)
+        if label == ENROLLED_LABEL and confidence <= threshold:
+            logger.debug(f'Face match (conf={confidence:.0f} <= {threshold:.0f})')
+            return FaceState.MATCH, float(confidence)
+        logger.info(f'Face does NOT match (conf={confidence:.0f} > {threshold:.0f})')
+        return FaceState.STRANGER, float(confidence)
 
-    if not recognizer.is_trained:
-        logger.warning("Face model exists but appears empty")
-        return 0.5
-
-    if show_preview:
-        ensure_display()
-
-    cap = cv2.VideoCapture(camera_index)
-    if not cap.isOpened():
-        logger.warning(f"Cannot open camera {camera_index}")
-        return fail_score
-
-    try:
-        for attempt in range(max_attempts):
-            ret, frame = cap.read()
-            if not ret:
-                time.sleep(0.05)
-                continue
-
-            rect, crop = detector.largest_face(frame)
-
-            if show_preview:
-                display = frame.copy()
-                if rect is not None:
-                    detector.draw_rect(display, rect)
-                cv2.putText(display, f"Verifying… attempt {attempt+1}/{max_attempts}",
-                            (10, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 200, 255), 2)
-                cv2.imshow("Behavioral-Auth – Face Verify", display)
-                cv2.waitKey(1)
-
-            if crop is None:
-                continue  # no face in this frame – try again
-
-            label, confidence = recognizer.predict(crop)
-            logger.debug(f"Face predict: label={label}, confidence={confidence:.1f}")
-
-            if label == ENROLLED_LABEL and confidence <= confidence_threshold:
-                logger.info(f"Face recognised  (conf={confidence:.1f} ≤ {confidence_threshold})")
-                return success_score
-            else:
-                logger.info(f"Face NOT recognised (conf={confidence:.1f}, label={label})")
-                return fail_score
-
-        logger.info("No face detected after all attempts")
-        return fail_score
-
-    finally:
-        cap.release()
-        if show_preview:
-            cv2.destroyAllWindows()
-
+    return FaceState.UNKNOWN, None   # nobody in front of the camera

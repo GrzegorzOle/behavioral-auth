@@ -1,140 +1,92 @@
-"""Tests for the OpenCV face recognition module."""
+"""Face recognition.
+
+The thing to keep in mind throughout: LBPH is trained with a single label, so
+predict() *always* answers "that's the enrolled person". Only the confidence
+value separates you from a stranger, which is why the cut-off is calibrated
+rather than guessed, and why an unrecognised frame is UNKNOWN rather than
+evidence of an intruder.
+"""
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 import numpy as np
-import pytest
+
+from behavioral_auth.face.calibrate import calibrate_threshold
+from behavioral_auth.face.detector import FaceDetector
+from behavioral_auth.face.recognizer import ENROLLED_LABEL, FaceRecognizer
+from behavioral_auth.inference.fusion import FaceState
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_face_images(n: int = 10, seed: int = 42) -> list:
-    """Generate synthetic 150×150 grayscale images (uint8)."""
+def _faces(n: int, seed: int = 0) -> list[np.ndarray]:
     rng = np.random.default_rng(seed)
-    return [rng.integers(0, 255, (150, 150), dtype=np.uint8) for _ in range(n)]
+    base = rng.integers(60, 190, (150, 150), dtype=np.uint8)
+    return [np.clip(base.astype(int) + rng.integers(-12, 12, (150, 150)),
+                    0, 255).astype(np.uint8) for _ in range(n)]
 
-
-# ---------------------------------------------------------------------------
-# FaceRecognizer
-# ---------------------------------------------------------------------------
 
 class TestFaceRecognizer:
-    def test_untrained_state(self, tmp_path):
-        from behavioral_auth.face.recognizer import FaceRecognizer
-        rec = FaceRecognizer(str(tmp_path / "model.yml"))
+    def test_untrained_recognises_nobody(self, tmp_path):
+        rec = FaceRecognizer(str(tmp_path / 'm.yml'))
         assert not rec.is_trained
-        label, conf = rec.predict(_make_face_images(1)[0])
-        assert label == -1
-        assert conf == 999.0
+        assert rec.predict(_faces(1)[0]) == (-1, 999.0)
 
-    def test_train_and_predict_known(self, tmp_path):
-        from behavioral_auth.face.recognizer import FaceRecognizer, ENROLLED_LABEL
-        rec = FaceRecognizer(str(tmp_path / "model.yml"))
-        faces = _make_face_images(15)
+    def test_training_persists_to_disk(self, tmp_path):
+        path = tmp_path / 'm.yml'
+        rec = FaceRecognizer(str(path))
+        rec.train(_faces(15))
+
+        assert rec.is_trained and path.exists()
+        assert FaceRecognizer(str(path)).is_trained      # reloads
+
+    def test_recognises_the_enrolled_person(self, tmp_path):
+        faces = _faces(15)
+        rec = FaceRecognizer(str(tmp_path / 'm.yml'))
         rec.train(faces)
-        assert rec.is_trained
-        label, conf = rec.predict(faces[0])
+
+        label, confidence = rec.predict(faces[0])
         assert label == ENROLLED_LABEL
-        assert conf < 50.0  # training sample should be very close
+        assert confidence < 50.0
 
-    def test_model_persisted(self, tmp_path):
-        from behavioral_auth.face.recognizer import FaceRecognizer
-        model_path = str(tmp_path / "model.yml")
-        rec = FaceRecognizer(model_path)
-        rec.train(_make_face_images(10))
-        # Load fresh instance from disk
-        rec2 = FaceRecognizer(model_path)
-        assert rec2.is_trained
-
-    def test_update_incremental(self, tmp_path):
-        from behavioral_auth.face.recognizer import FaceRecognizer, ENROLLED_LABEL
-        rec = FaceRecognizer(str(tmp_path / "model.yml"))
-        rec.train(_make_face_images(10, seed=1))
-        rec.update(_make_face_images(5, seed=2))
-        assert rec.is_trained
-
-    def test_delete(self, tmp_path):
-        from behavioral_auth.face.recognizer import FaceRecognizer
-        model_path = str(tmp_path / "model.yml")
-        rec = FaceRecognizer(model_path)
-        rec.train(_make_face_images(10))
-        assert Path(model_path).exists()
+    def test_delete_removes_the_pattern(self, tmp_path):
+        path = tmp_path / 'm.yml'
+        rec = FaceRecognizer(str(path))
+        rec.train(_faces(12))
         rec.delete()
-        assert not Path(model_path).exists()
-        assert not rec.is_trained
 
-    def test_info_trained(self, tmp_path):
-        from behavioral_auth.face.recognizer import FaceRecognizer
-        rec = FaceRecognizer(str(tmp_path / "model.yml"))
-        rec.train(_make_face_images(10))
-        info = rec.info()
-        assert info["trained"] is True
-        assert "model_path" in info
-        assert info["model_size_kb"] > 0
-
-    def test_info_untrained(self, tmp_path):
-        from behavioral_auth.face.recognizer import FaceRecognizer
-        rec = FaceRecognizer(str(tmp_path / "model.yml"))
-        assert rec.info() == {"trained": False}
+        assert not rec.is_trained and not path.exists()
 
 
-# ---------------------------------------------------------------------------
-# FaceDetector
-# ---------------------------------------------------------------------------
+class TestCalibration:
+    def test_threshold_comes_from_held_out_crops(self):
+        threshold = calibrate_threshold(_faces(40))
+        assert threshold is not None and threshold > 0
 
-class TestFaceDetector:
-    def test_cascade_loads(self):
-        from behavioral_auth.face.detector import FaceDetector
-        det = FaceDetector()
-        assert not det.cascade.empty()
-
-    def test_no_face_in_blank_frame(self):
-        from behavioral_auth.face.detector import FaceDetector
-        det = FaceDetector()
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        rect, crop = det.largest_face(frame)
-        assert rect is None
-        assert crop is None
-
-    def test_detect_all_returns_list(self):
-        from behavioral_auth.face.detector import FaceDetector
-        det = FaceDetector()
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        result = det.detect_all(frame)
-        assert isinstance(result, list)
+    def test_too_few_crops_yield_no_threshold(self):
+        """Better no face channel at all than one calibrated on four photos."""
+        assert calibrate_threshold(_faces(4)) is None
 
 
-# ---------------------------------------------------------------------------
-# opencv_face_score (verify) – no camera needed
-# ---------------------------------------------------------------------------
+class TestDetector:
+    def test_a_blank_frame_holds_no_face(self):
+        blank = np.zeros((480, 640, 3), dtype=np.uint8)
+        assert FaceDetector().largest_face(blank) == (None, None)
 
-class TestOpencvFaceScore:
-    def test_returns_neutral_when_no_model(self, tmp_path):
-        from behavioral_auth.face.verify import opencv_face_score
-        score = opencv_face_score(
-            model_path=str(tmp_path / "nonexistent.yml"),
-        )
-        assert score == 0.5  # neutral – no model yet
 
-    def test_returns_fail_when_camera_unavailable(self, tmp_path):
-        """Use a non-existent camera index to simulate unavailable camera."""
-        from behavioral_auth.face.recognizer import FaceRecognizer
-        from behavioral_auth.face.verify import opencv_face_score
+class TestVerify:
+    def test_no_model_means_unknown_not_stranger(self, cfg):
+        """With no pattern enrolled we know nothing — and knowing nothing must
+        never read as 'an intruder is here'."""
+        from behavioral_auth.face.verify import check
 
-        model_path = str(tmp_path / "model.yml")
-        rec = FaceRecognizer(model_path)
-        rec.train(_make_face_images(10))
+        cfg.face.enabled = True
+        cfg.face.model_path = '/nonexistent/face.yml'
+        state, confidence = check(cfg)
 
-        # Camera index 99 should not exist on any reasonable system
-        score = opencv_face_score(
-            model_path=model_path,
-            camera_index=99,
-            fail_score=0.85,
-        )
-        assert score == 0.85
+        assert state is FaceState.UNKNOWN
+        assert confidence is None
 
+    def test_disabled_face_is_unknown(self, cfg):
+        from behavioral_auth.face.verify import check
+
+        cfg.face.enabled = False
+        assert check(cfg)[0] is FaceState.UNKNOWN

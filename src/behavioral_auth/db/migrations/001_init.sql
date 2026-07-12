@@ -1,5 +1,3 @@
-PRAGMA enable_progress_bar = false;
-
 CREATE TABLE IF NOT EXISTS sessions (
     session_id UUID PRIMARY KEY,
     user_name VARCHAR NOT NULL,

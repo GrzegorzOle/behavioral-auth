@@ -1,40 +1,82 @@
-"""Reporting module: print decision distribution and proxy FAR/FRR metrics.
+"""behavioral-report — what the daemon has actually observed.
 
-Reads the *decisions* table from DuckDB and summarises:
-  - Mean behavioural and fused scores
-  - Decision value counts (ALLOW / CHALLENGE / LOCK)
-  - FAR proxy : fraction of decisions at or above lock_threshold
-  - FRR proxy : fraction of decisions at or below challenge_threshold
-  - EER proxy : arithmetic mean of FAR and FRR proxies
+Deliberately does NOT print FAR/FRR/EER. The previous version computed them
+from the user's own scores, which is meaningless: with no impostor samples, a
+"false accept rate" measured against yourself is a number with no referent. It
+looked like a security metric and was not one. What follows are observations,
+labelled as such.
 """
 
-from pathlib import Path
+from __future__ import annotations
+
 import json
-import duckdb
+from pathlib import Path
+
 from behavioral_auth.config import load_settings
+from behavioral_auth.db import open_db
 
 
 def report() -> None:
-    """Print a metrics summary to stdout."""
     cfg = load_settings()
-    conn = duckdb.connect(cfg.storage.db_path)
-    df = conn.execute(
-        'SELECT ts_utc, behavioral_score, howdy_score, fused_score, decision, mode '
-        'FROM decisions ORDER BY ts_utc'
-    ).fetchdf()
-    if df.empty:
-        print('No decisions recorded yet.')
+    conn = open_db(cfg)
+    try:
+        _print(conn, cfg)
+    finally:
+        conn.close()
+
+
+def _print(conn, cfg) -> None:
+    enrollment = conn.execute(
+        "SELECT enrollment_id, status, created_at FROM enrollments "
+        "WHERE status <> 'retired' ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+
+    print()
+    if not enrollment:
+        print('Brak wzorca. Uruchom: behavioral-authd')
         return
+    eid, status, created = enrollment
+    print(f'Wzorzec {str(eid)[:8]}…  status={status}  utworzony {created:%Y-%m-%d %H:%M}')
+
     meta_path = Path(cfg.model.metadata_path)
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    print('rows=', len(df))
-    print('behavioral_mean=', float(df.behavioral_score.mean()))
-    print('fused_mean=', float(df.fused_score.mean()))
-    print(df.decision.value_counts().to_string())
-    if meta:
-        far = float((df.fused_score >= meta.get('lock_threshold', 1.0)).mean())
-        frr = float((df.fused_score <= meta.get('challenge_threshold', 0.0)).mean())
-        print(json.dumps(
-            {'FAR_proxy': far, 'FRR_proxy': frr, 'EER_proxy': (far + frr) / 2.0},
-            indent=2,
-        ))
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+        print(f'  próg anomalii {meta["threshold"]:.4f}  '
+              f'(trening {meta["n_train"]} sekwencji, holdout {meta["n_holdout"]})')
+        print(f'  separacja od syntetycznych negatywów: {meta["separation"]:.1f}x')
+
+    cycles = conn.execute(
+        'SELECT cycle_no, pass_rate, error_ratio, separation, stable, promoted '
+        'FROM learning_cycles WHERE enrollment_id = ? ORDER BY cycle_no', [eid]
+    ).fetchall()
+    if cycles:
+        print(f'\nCykle nauki ({len(cycles)}):')
+        for no, pr, er, sep, stable, promoted in cycles:
+            mark = '✓' if stable else '·'
+            tail = '  ← PROMOCJA' if promoted else ''
+            print(f'  {mark} #{no}  pass_rate {pr:.2f}  err_ratio {er:.2f}  '
+                  f'separacja {sep:.1f}x{tail}')
+
+    scores = conn.execute(
+        'SELECT count(*), avg(ratio), max(ratio), '
+        "count(*) FILTER (WHERE verdict = 'anomalous') "
+        'FROM scores WHERE enrollment_id = ?', [eid]
+    ).fetchone()
+    if scores and scores[0]:
+        n, avg, mx, anom = scores
+        print(f'\nPunktacja w nadzorze: {n} sekwencji')
+        print(f'  odchylenie od progu: średnio {avg:.2f}x, maksymalnie {mx:.2f}x')
+        print(f'  ocenionych jako anomalne: {anom} ({anom / n * 100:.1f}%)')
+
+    alarms = conn.execute(
+        'SELECT started_at, ended_at, reason, peak_ratio, n_scores '
+        'FROM alarms WHERE enrollment_id = ? ORDER BY started_at DESC LIMIT 10', [eid]
+    ).fetchall()
+    print(f'\nAlarmy: {len(alarms)}')
+    for started, ended, reason, peak, n in alarms:
+        span = f'{(ended - started).total_seconds():.0f}s' if ended else 'trwa'
+        print(f'  {started:%Y-%m-%d %H:%M}  powód={reason}  szczyt={peak:.2f}x  '
+              f'czas={span}  ({n} wyników)')
+
+    print('\nCzego tu NIE ma: wskaźników FAR/FRR. Nie da się ich policzyć — system '
+          'widział\ndane tylko jednej osoby, więc nie ma z czym ich porównać.\n')

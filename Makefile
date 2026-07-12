@@ -4,34 +4,36 @@ PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
 export PYTHONPATH := src
 
-.PHONY: venv install schema features train infer report test lint clean
+.PHONY: venv install run status report test lint demo clean
 
 venv:
 	$(PYTHON) -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
 	$(PIP) install -r requirements-dev.txt
+	$(PIP) install -e .
 
 install:
 	bash src/scripts/fedora-install.sh
 
-schema:
-	PYTHONPATH=src $(PY) src/scripts/bootstrap_db.py
+# The daemon creates and migrates the database itself on first start —
+# there is no separate schema step any more.
+run:
+	$(VENV)/bin/behavioral-authd
 
-features:
-	PYTHONPATH=src $(PY) -m behavioral_auth features
-
-train:
-	PYTHONPATH=src $(PY) -m behavioral_auth train
-
-infer:
-	PYTHONPATH=src $(PY) -m behavioral_auth infer
+status:
+	$(VENV)/bin/behavioral-auth status
 
 report:
-	PYTHONPATH=src $(PY) -m behavioral_auth report
+	$(VENV)/bin/behavioral-report
+
+# Walk the whole LEARNING -> MONITORING -> ALARM path in a couple of minutes,
+# without typing for hours or recruiting someone to impersonate you.
+demo:
+	$(VENV)/bin/behavioral-authd --synthetic-input user --synthetic-speed 40
 
 test:
-	PYTHONPATH=src $(PY) -m pytest tests -q
+	$(PY) -m pytest tests -q
 
 lint:
 	$(VENV)/bin/ruff check src tests

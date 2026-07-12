@@ -1,60 +1,88 @@
-"""Training entry point for the behavioural autoencoder.
+"""Autoencoder fitting.
 
-Pipeline:
-  1. Load all fused_sequences from DuckDB.
-  2. Fit and save a per-feature z-score scaler.
-  3. Train a Conv1D autoencoder (Encoder) using MSE loss.
-  4. Compute validation reconstruction errors → derive thresholds.
-  5. Export model to ONNX and write metadata JSON.
-  6. Register the new model version in model_registry.
+Pure functions: no database, no printing, no file writes. The caller (the
+learning controller) owns the data, the split and the artifacts — which is
+what lets this run inside a worker thread while the daemon keeps collecting.
 """
 
-from pathlib import Path
-import json, os
-import duckdb, numpy as np, torch, torch.nn as nn
-from sklearn.model_selection import train_test_split
-from behavioral_auth.config import load_settings
-from behavioral_auth.models.encoder import Encoder
-from behavioral_auth.models.onnx_export import export_onnx
-from behavioral_auth.features.scaler import fit_and_save_scaler, apply_scaler
-from behavioral_auth.training.dataset import load_training_dataset
-from behavioral_auth.training.thresholds import calculate_thresholds
+from __future__ import annotations
 
-def train() -> None:
-    """Run the full training pipeline and export the ONNX model."""
-    cfg = load_settings()
-    conn = duckdb.connect(cfg.storage.db_path)
-    X = load_training_dataset(conn)
-    mean, std = fit_and_save_scaler(X, cfg.features.scaler_path)
-    X = apply_scaler(X, mean, std)
-    y = X[:, -1, :]
-    Xtr, Xva, ytr, yva = train_test_split(X, y, test_size=cfg.model.val_split, random_state=42)
-    device = torch.device('cuda' if torch.cuda.is_available() and not os.environ.get('CUDA_VISIBLE_DEVICES', '') == '' else 'cpu')
-    if device.type == 'cuda':
-        # Verify CUDA compute capability is supported
+import numpy as np
+import torch
+import torch.nn as nn
+
+from behavioral_auth.config import Settings
+from behavioral_auth.models.encoder import Encoder
+
+
+def resolve_device(cfg: Settings) -> torch.device:
+    want = cfg.model.device
+    if want == 'cuda' or (want == 'auto' and torch.cuda.is_available()):
         try:
-            torch.zeros(1, device=device)
+            torch.zeros(1, device='cuda')
+            return torch.device('cuda')
         except Exception:
-            device = torch.device('cpu')
-    print(f'Training device: {device}')
-    Xtr = torch.tensor(Xtr).permute(0,2,1).to(device); ytr = torch.tensor(ytr).to(device)
-    Xva = torch.tensor(Xva).permute(0,2,1).to(device); yva = torch.tensor(yva).to(device)
-    model = Encoder(cfg.model.input_dim, cfg.model.hidden_dim, cfg.model.num_layers, cfg.model.kernel_size, cfg.model.dropout).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=cfg.model.lr); loss_fn = nn.MSELoss()
-    for epoch in range(cfg.model.epochs):
-        model.train(); perm = torch.randperm(Xtr.size(0), device=device); total = 0.0
-        for i in range(0, Xtr.size(0), cfg.model.batch_size):
-            idx = perm[i:i+cfg.model.batch_size]; xb, yb = Xtr[idx], ytr[idx]
-            opt.zero_grad(); pred = model(xb); loss = loss_fn(pred, yb); loss.backward(); opt.step(); total += float(loss.item()) * len(idx)
-        model.eval()
-        with torch.no_grad(): val_loss = float(loss_fn(model(Xva), yva).item())
-        print({'epoch': epoch + 1, 'train_loss': total / Xtr.size(0), 'val_loss': val_loss})
-    with torch.no_grad():
-        va_err = ((model(Xva) - yva) ** 2).mean(dim=1).detach().cpu().numpy()
-    challenge, lock = calculate_thresholds(va_err)
-    export_onnx(model, cfg.model.model_path, cfg.model.input_dim, cfg.model.seq_len, device)
-    meta = {'input_dim': cfg.model.input_dim, 'seq_len': cfg.model.seq_len, 'challenge_threshold': challenge, 'lock_threshold': lock, 'val_mean_error': float(va_err.mean()), 'train_samples': int(Xtr.size(0)), 'val_samples': int(Xva.size(0))}
-    Path(cfg.model.metadata_path).write_text(json.dumps(meta, indent=2))
-    version = conn.execute('SELECT COALESCE(MAX(version),0)+1 FROM model_registry').fetchone()[0]
-    conn.execute('INSERT INTO model_registry (version, model_path, scaler_path, threshold_challenge, threshold_lock, metrics_json, notes) VALUES (?, ?, ?, ?, ?, ?, ?)', [version, cfg.model.model_path, cfg.features.scaler_path, challenge, lock, json.dumps(meta), 'autoencoder-structured'])
-    print(json.dumps(meta, indent=2))
+            pass
+    return torch.device('cpu')
+
+
+def _as_batch(X: np.ndarray, device: torch.device) -> torch.Tensor:
+    """(n, seq_len, features) -> (n, features, seq_len), the Conv1d layout."""
+    return torch.tensor(X, dtype=torch.float32).permute(0, 2, 1).to(device)
+
+
+def build_model(cfg: Settings) -> Encoder:
+    return Encoder(
+        cfg.model.input_dim, cfg.model.hidden_dim, cfg.model.num_layers,
+        cfg.model.kernel_size, cfg.model.dropout,
+        seq_len=cfg.model.seq_len, latent=cfg.model.latent_dim,
+    )
+
+
+def fit(X: np.ndarray, cfg: Settings, device: torch.device | None = None) -> Encoder:
+    """Train an Encoder to reconstruct whole sequences through the bottleneck.
+
+    *X* must already be scaled and must contain only the model's input columns.
+
+    The seed is fixed on purpose. Each learning cycle trains a fresh model, and
+    the promotion gate asks "has the pattern stopped changing?" — a question
+    about the *data*. With a random initialisation each cycle, two models fitted
+    to near-identical data land at different minima with differently shaped
+    error distributions, and the gate reads that optimiser noise as an unstable
+    pattern. Pinning the seed makes cycle-to-cycle differences mean what the
+    gate thinks they mean.
+    """
+    device = device or resolve_device(cfg)
+    torch.manual_seed(cfg.model.seed)
+    inputs = _as_batch(X, device)      # the input is also the target
+
+    model = build_model(cfg).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=cfg.model.lr)
+    loss_fn = nn.MSELoss()
+
+    n = inputs.size(0)
+    for _ in range(cfg.model.epochs):
+        model.train()
+        perm = torch.randperm(n, device=device)
+        for i in range(0, n, cfg.model.batch_size):
+            batch = inputs[perm[i:i + cfg.model.batch_size]]
+            opt.zero_grad()
+            loss = loss_fn(model(batch), batch)
+            loss.backward()
+            opt.step()
+
+    model.eval()
+    return model
+
+
+@torch.no_grad()
+def reconstruction_errors(model: Encoder, X: np.ndarray,
+                          device: torch.device | None = None) -> np.ndarray:
+    """Per-sequence MSE over the whole reconstructed sequence."""
+    if len(X) == 0:
+        return np.empty(0, dtype=np.float32)
+    device = device or next(model.parameters()).device
+    model.eval()
+    inputs = _as_batch(X, device)
+    err = ((model(inputs) - inputs) ** 2).mean(dim=(1, 2))
+    return err.detach().cpu().numpy()

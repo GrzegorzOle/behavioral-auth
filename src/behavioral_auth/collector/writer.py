@@ -1,59 +1,50 @@
-import time
-import threading
-import duckdb
+"""Batched writer for raw input events.
+
+The connection is injected rather than opened here: the daemon owns the single
+DuckDB instance, and the old design — where the Writer opened its own
+connection and held it for the process lifetime — is precisely what forced
+the previous code to kill the collector before every scoring cycle.
+
+No lock and no background thread either. `add()` is called from the asyncio
+loop and `flush()` from the same loop, so there is nothing to synchronise.
+"""
+
+from __future__ import annotations
+
 from loguru import logger
-from behavioral_auth.config import load_settings
+
+_INSERT = (
+    'INSERT INTO raw_events '
+    '(ts_ns, ts_utc, session_id, dev_path, dev_name, dev_type, ev_type, ev_code, ev_value) '
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+)
+
 
 class Writer:
-    """Thread-safe batched writer with periodic background flush."""
+    def __init__(self, conn, batch_size: int = 200):
+        self.conn = conn
+        self.batch_size = batch_size
+        self.buf: list[tuple] = []
+        self.total = 0
 
-    def __init__(self):
-        self.cfg = load_settings()
-        self.conn = duckdb.connect(self.cfg.storage.db_path)
-        self.conn.execute('PRAGMA threads=4')
-        self.buf: list = []
-        self._lock = threading.Lock()
-        self.last = time.monotonic()
-        # Start a background thread that flushes every flush_interval_sec
-        self._stop = threading.Event()
-        self._timer = threading.Thread(target=self._periodic_flush, daemon=True)
-        self._timer.start()
-
-    def _periodic_flush(self) -> None:
-        interval = max(self.cfg.collector.flush_interval_sec, 0.5)
-        while not self._stop.wait(interval):
+    def add(self, row: tuple) -> None:
+        self.buf.append(row)
+        if len(self.buf) >= self.batch_size:
             self.flush()
 
-    def add(self, row) -> None:
-        with self._lock:
-            self.buf.append(row)
-            elapsed = time.monotonic() - self.last
-            if (len(self.buf) >= self.cfg.collector.batch_size
-                    or elapsed >= self.cfg.collector.flush_interval_sec):
-                self._flush_locked()
-
-    def flush(self) -> None:
-        with self._lock:
-            self._flush_locked()
-
-    def _flush_locked(self) -> None:
+    def flush(self) -> int:
+        """Write the buffer. Returns the number of events written."""
         if not self.buf:
-            return
+            return 0
+        batch, self.buf = self.buf, []
         try:
-            self.conn.executemany(
-                'INSERT INTO raw_events '
-                '(ts_ns, ts_utc, session_id, dev_path, dev_name, dev_type, ev_type, ev_code, ev_value) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                self.buf,
-            )
-            logger.debug(f"Flushed {len(self.buf)} events")
-            self.buf.clear()
-            self.last = time.monotonic()
+            self.conn.executemany(_INSERT, batch)
         except Exception as exc:
-            logger.error(f"Flush failed: {exc}")
-
-    def close(self) -> None:
-        self._stop.set()
-        self._timer.join(timeout=3)
-        self.flush()
-        self.conn.close()
+            # Put the batch back so the next flush retries it rather than
+            # silently dropping the user's behaviour on the floor.
+            self.buf = batch + self.buf
+            logger.error(f'Flush of {len(batch)} events failed: {exc}')
+            return 0
+        self.total += len(batch)
+        logger.debug(f'Flushed {len(batch)} events (total {self.total})')
+        return len(batch)

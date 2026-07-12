@@ -1,11 +1,7 @@
-"""OpenCV-based face recognition module.
+"""Face recognition: Haar-cascade detection + LBPH, any USB or built-in camera.
 
-Works cross-platform (Linux, Windows, macOS) with any USB/built-in camera.
-Uses Haar cascade for detection and LBPH for recognition.
+Enrolment happens silently in the background while the daemon is LEARNING;
+there is no interactive enroll step. Note that LBPH is trained with a single
+label, so it can only ever answer "how confident am I that this is the enrolled
+person" — the calibrated confidence cut-off is the whole of the decision.
 """
-
-from behavioral_auth.face.enroll import enroll_face
-from behavioral_auth.face.verify import opencv_face_score
-
-__all__ = ["enroll_face", "opencv_face_score"]
-

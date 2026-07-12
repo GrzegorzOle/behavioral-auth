@@ -1,81 +1,95 @@
-"""ONNX inference runtime for the behavioural autoencoder.
+"""ONNX scoring runtime.
 
-Loads the latest fused sequence from DuckDB, normalises it with the saved
-scaler, runs the ONNX model, and returns the MSE reconstruction error as a
-raw anomaly score.
+Loads the frozen pattern (model + scaler + metadata) and turns stored
+sequences into reconstruction errors. The InferenceSession is cached: it used
+to be rebuilt on every single score, which cost 50-200 ms a tick for nothing.
 """
 
-from pathlib import Path
+from __future__ import annotations
+
 import json
+from dataclasses import dataclass
+from pathlib import Path
+
 import numpy as np
 import onnxruntime as ort
-from behavioral_auth.config import load_settings
+from loguru import logger
+
+from behavioral_auth.config import Settings
+from behavioral_auth.features.pipeline import to_model_input
+from behavioral_auth.features.scaler import apply_scaler, load_scaler
+
+_SESSIONS: dict[tuple[str, int], ort.InferenceSession] = {}
 
 
-def latest_session(conn) -> str | None:
-    """Return the session_id of the most recently started session, or None."""
-    row = conn.execute(
-        'SELECT session_id FROM sessions ORDER BY started_at DESC LIMIT 1'
-    ).fetchone()
-    return row[0] if row else None
+def _session(model_path: str) -> ort.InferenceSession:
+    key = (model_path, Path(model_path).stat().st_mtime_ns)
+    if key not in _SESSIONS:
+        _SESSIONS.clear()  # a new model supersedes the old one
+        _SESSIONS[key] = ort.InferenceSession(
+            model_path, providers=['CPUExecutionProvider'])
+    return _SESSIONS[key]
 
 
-def latest_sequence(conn, session_id: str) -> tuple | None:
-    """Return (seq_end_ns, data_json) for the newest sequence of *session_id*."""
-    row = conn.execute(
-        'SELECT seq_end_ns, data_json FROM fused_sequences '
-        'WHERE session_id = ? ORDER BY seq_end_ns DESC LIMIT 1',
-        [session_id],
-    ).fetchone()
-    return row if row else None
+class PatternMismatch(RuntimeError):
+    """The stored model does not match the current feature configuration."""
 
 
-def latest_sequence_any(conn) -> tuple | None:
-    """Return (seq_end_ns, data_json) for the newest sequence across all sessions."""
-    row = conn.execute(
-        'SELECT seq_end_ns, data_json FROM fused_sequences ORDER BY seq_end_ns DESC LIMIT 1'
-    ).fetchone()
-    return row if row else None
+@dataclass
+class Pattern:
+    """A trained, frozen pattern: the thing MONITORING scores against."""
+    model_path: str
+    scaler: dict
+    meta: dict
+
+    @property
+    def threshold(self) -> float:
+        return float(self.meta['threshold'])
+
+    @property
+    def enrollment_id(self) -> str | None:
+        return self.meta.get('enrollment_id')
+
+    def errors(self, X: np.ndarray) -> np.ndarray:
+        """Reconstruction error per sequence. *X* is (n, seq_len, 21) as stored."""
+        if len(X) == 0:
+            return np.empty(0, dtype=np.float32)
+        Xm = apply_scaler(to_model_input(X).astype(np.float32), self.scaler)
+        inputs = np.transpose(Xm, (0, 2, 1))  # (n, features, seq_len)
+        recon = _session(self.model_path).run(['recon'], {'input': inputs})[0]
+        return np.mean((recon - inputs) ** 2, axis=(1, 2))
+
+    def ratios(self, X: np.ndarray) -> np.ndarray:
+        """Error relative to the calibrated threshold: >1 means anomalous."""
+        thr = self.threshold
+        return self.errors(X) / thr if thr > 0 else np.zeros(len(X))
 
 
-def predict_behavioral(conn) -> tuple | None:
-    """Run the ONNX autoencoder on the latest sequence and return MSE error.
+def load_pattern(cfg: Settings) -> Pattern | None:
+    """Load the frozen pattern, or None if this machine has not trained one.
 
-    Returns:
-        (session_id, seq_end_ns, mse_error) or None if model/data is missing.
+    Raises PatternMismatch when the artifacts exist but were built for a
+    different sequence length — ONNX freezes seq_len at export, so scoring
+    anyway would silently produce garbage.
     """
-    cfg = load_settings()
-    meta_path   = Path(cfg.model.metadata_path)
+    model_path = Path(cfg.model.model_path)
+    meta_path = Path(cfg.model.metadata_path)
     scaler_path = Path(cfg.features.scaler_path)
-    model_path  = Path(cfg.model.model_path)
-    if not meta_path.exists() or not scaler_path.exists() or not model_path.exists():
-        return None
-    scaler = json.loads(scaler_path.read_text())
-
-    # Try current session first, fall back to any session
-    sid = latest_session(conn)
-    row = latest_sequence(conn, sid) if sid else None
-
-    if not row:
-        row = latest_sequence_any(conn)
-        sid_row = conn.execute(
-            'SELECT session_id FROM fused_sequences ORDER BY seq_end_ns DESC LIMIT 1'
-        ).fetchone()
-        sid = sid_row[0] if sid_row else None
-
-    if not row or not sid:
+    if not (model_path.exists() and meta_path.exists() and scaler_path.exists()):
         return None
 
-    seq_end_ns, data_json = row
-    X    = np.array(json.loads(data_json), dtype=np.float32)
-    mean = np.array(scaler['mean'], dtype=np.float32)
-    std  = np.array(scaler['std'],  dtype=np.float32)
-    X    = (X - mean) / std
-    Xn   = np.transpose(X[np.newaxis, ...], (0, 2, 1))
-    sess  = ort.InferenceSession(str(model_path), providers=['CPUExecutionProvider'])
-    recon = sess.run(['recon'], {'input': Xn})[0][0]
-    target     = Xn[0, :, -1]
-    behavioral = float(np.mean((recon - target) ** 2))
-    return sid, seq_end_ns, behavioral
+    meta = json.loads(meta_path.read_text())
+    if meta.get('seq_len') != cfg.model.seq_len:
+        raise PatternMismatch(
+            f"model was trained with seq_len={meta.get('seq_len')} but config "
+            f"says {cfg.model.seq_len} — retrain (behavioral-auth reset) or "
+            f"restore the old setting"
+        )
+    if meta.get('input_dim') != cfg.model.input_dim:
+        raise PatternMismatch(
+            f"model expects input_dim={meta.get('input_dim')} but the feature "
+            f"configuration yields {cfg.model.input_dim}"
+        )
 
-
+    logger.debug(f'Loaded pattern: threshold={meta.get("threshold")}')
+    return Pattern(str(model_path), load_scaler(str(scaler_path)), meta)

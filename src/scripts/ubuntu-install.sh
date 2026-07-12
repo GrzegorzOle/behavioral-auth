@@ -39,8 +39,7 @@ cp "$ROOT_DIR/requirements.txt" \
    "$ROOT_DIR/pyproject.toml" \
    "$INSTALL_DIR/" 2>/dev/null || true
 cp "$ROOT_DIR/config/config.yaml" "$ETC_DIR/"
-cp "$ROOT_DIR/db/schema.sql" "$ETC_DIR/"
-cp "$ROOT_DIR/systemd/user"/*.service "$USER_HOME/.config/systemd/user/"
+cp "$ROOT_DIR/systemd/user/behavioral-authd.service" "$USER_HOME/.config/systemd/user/"
 
 chown -R "$USER_NAME:$USER_NAME" \
     "$INSTALL_DIR" "$DATA_DIR" \
@@ -61,34 +60,31 @@ echo "[5/6] Configuring udev rules..."
 cat > /etc/udev/rules.d/99-behavioral-auth.rules <<'EOF'
 KERNEL=="event*", GROUP="input", MODE="0660"
 EOF
-usermod -aG input "$USER_NAME" || true
+# input: read the keyboard and mouse.  video: the camera, for face enrolment.
+usermod -aG input,video "$USER_NAME" || true
 udevadm control --reload-rules || true
 udevadm trigger || true
 
-# ── 6. Initialise database ─────────────────────────────────────────────────
-echo "[6/6] Bootstrapping database..."
-BEHAVIORAL_DB_PATH="$DATA_DIR/behavioral.db" \
-    "$INSTALL_DIR/.venv/bin/python" \
-    "$INSTALL_DIR/src/scripts/bootstrap_db.py" || true
+# ── 6. Done ────────────────────────────────────────────────────────────────
+# The database is created and migrated by the daemon on first start; there is
+# no schema step to run here.
 
-echo ""
-echo "✅  behavioral-auth installed to $INSTALL_DIR"
-echo ""
-echo "Next steps:"
-echo "  1. Log out and back in (so the 'input' group takes effect)"
-echo "     OR run:  newgrp input"
-echo "  2. Activate the venv:"
-echo "       source $INSTALL_DIR/.venv/bin/activate"
-echo "  3. Collect training data (at least 15 min of normal use):"
-echo "       sg input -c 'behavioral-collector'"
-echo "  4. Extract features and train:"
-echo "       behavioral-features && CUDA_VISIBLE_DEVICES='' behavioral-train"
-echo "  5. Live verification:"
-echo "       behavioral-verify --duration 120 --no-face"
-echo ""
-echo "To enable systemd user services:"
-echo "  systemctl --user daemon-reload"
-echo "  systemctl --user enable --now behavioral-collector.service"
-echo "  systemctl --user enable --now behavioral-inference.service"
-echo "  sudo bash $ROOT_DIR/src/scripts/timer-install.sh"
+cat <<EOF
 
+✅  behavioral-auth installed to $INSTALL_DIR
+
+Log out and back in (so the input/video groups take effect), then:
+
+    systemctl --user enable --now behavioral-authd
+    journalctl --user -fu behavioral-authd
+
+Or run it in a terminal to watch it learn:
+
+    $INSTALL_DIR/.venv/bin/behavioral-authd
+
+It collects behaviour for a few hours, converges on a pattern, freezes it, and
+then warns you — never locks you out — if someone else starts using the machine.
+
+    behavioral-auth status       what it is doing right now
+    behavioral-auth reset        somebody else will be using this machine
+EOF

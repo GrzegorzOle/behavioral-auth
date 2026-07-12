@@ -1,149 +1,170 @@
 """Feature extraction pipeline.
 
-Transforms raw input events stored in DuckDB into:
+Turns raw input events into:
   1. feature_windows  – fixed-duration windows of 21 behavioural features
-  2. fused_sequences  – sliding windows of seq_len consecutive feature vectors
-                        (the format consumed by the ONNX autoencoder)
+  2. fused_sequences  – sliding runs of seq_len consecutive windows, the
+                        format the autoencoder consumes
 
-Feature columns (21 total):
-  Keystroke (8): count, mean/std dwell, mean/std flight, backspace ratio,
-                 repeat ratio, dwell entropy
-  Mouse     (9): count, speed mean/std, acceleration mean, click count,
-                 click dwell, scroll count, idle ratio, path curvature
-  Context   (4): hour sin/cos, is_weekend flag, activity density
+Both steps are *incremental*: they resume from a watermark and only produce
+what is new. The daemon calls them every tick, so re-deriving the whole
+session each time would be quadratic — and, before the unique index existed,
+it also duplicated every window on every run.
 """
 
-from pathlib import Path
+from __future__ import annotations
+
 import json
+
 import duckdb
 import numpy as np
 from loguru import logger
-from behavioral_auth.config import load_settings
+
+from behavioral_auth.config import FEATURE_COLUMNS, MODEL_COL_IDX, Settings
+from behavioral_auth.features.context import extract_context_features
 from behavioral_auth.features.keystroke import extract_keystroke_features
 from behavioral_auth.features.mouse import extract_mouse_features
-from behavioral_auth.features.context import extract_context_features
 
-FEATURE_COLUMNS = [
-    'f_ks_count', 'f_ks_mean_dwell', 'f_ks_std_dwell',
-    'f_ks_mean_flight', 'f_ks_std_flight', 'f_ks_backspace_ratio',
-    'f_ks_repeat_ratio', 'f_ks_entropy',
-    'f_ms_count', 'f_ms_speed_mean', 'f_ms_speed_std', 'f_ms_acc_mean',
-    'f_ms_clicks', 'f_ms_click_dwell', 'f_ms_scrolls', 'f_ms_idle_ratio',
-    'f_ms_curvature',
-    'f_ctx_hour_sin', 'f_ctx_hour_cos', 'f_ctx_is_weekend',
-    'f_activity_density',
+__all__ = [
+    'FEATURE_COLUMNS',
+    'build_feature_windows',
+    'build_sequences',
+    'to_model_input',
 ]
 
 
-def load_session_events(conn, session_id):
-    """Load all raw events for *session_id*, ordered by timestamp (ns)."""
+def to_model_input(X: np.ndarray) -> np.ndarray:
+    """Project stored 21-feature vectors onto the model's input columns."""
+    return X[..., MODEL_COL_IDX]
+
+
+def _load_events(conn, session_id: str, since_ns: int):
+    """Events for *session_id* at or after *since_ns*, ordered by time."""
     return conn.execute(
         'SELECT ts_ns, ts_utc, dev_type, ev_type, ev_code, ev_value '
-        'FROM raw_events WHERE session_id = ? ORDER BY ts_ns',
-        [session_id]
+        'FROM raw_events WHERE session_id = ? AND ts_ns >= ? ORDER BY ts_ns',
+        [session_id, since_ns],
     ).fetchdf()
 
 
-def build_feature_windows(conn, session_id, cfg) -> int:
-    """Slide a fixed-duration window over *session_id* events and insert rows
-    into *feature_windows*.  Returns the number of windows inserted."""
-    df = load_session_events(conn, session_id)
+def build_feature_windows(conn, session_id: str, enrollment_id: str, cfg: Settings) -> int:
+    """Extract every window that has closed since the last call.
+
+    Windows sit on a fixed grid anchored at the session's first event, so the
+    same window boundaries are produced no matter when this runs. Returns the
+    number of windows inserted.
+    """
+    bounds = conn.execute(
+        'SELECT min(ts_ns), max(ts_ns) FROM raw_events WHERE session_id = ?',
+        [session_id],
+    ).fetchone()
+    if not bounds or bounds[0] is None:
+        return 0
+    origin, last_event_ns = int(bounds[0]), int(bounds[1])
+
+    win_ns = int(cfg.features.window_sec * 1e9)
+    stride_ns = int(cfg.features.stride_sec * 1e9)
+
+    watermark = conn.execute(
+        'SELECT max(window_start_ns) FROM feature_windows WHERE session_id = ?',
+        [session_id],
+    ).fetchone()[0]
+    # Resume one stride past the newest window we already have.
+    start = origin if watermark is None else int(watermark) + stride_ns
+    if start + win_ns > last_event_ns:
+        return 0
+
+    df = _load_events(conn, session_id, start)
     if df.empty:
         return 0
-    win_ns    = int(cfg.features.window_sec * 1e9)
-    stride_ns = int(cfg.features.stride_sec * 1e9)
-    start = int(df.ts_ns.min())
-    end   = int(df.ts_ns.max())
-    inserted  = 0
+
+    inserted = 0
     w = start
-    while w + win_ns <= end:
-        sub = df[(df.ts_ns >= w) & (df.ts_ns < w + win_ns)].copy()
+    while w + win_ns <= last_event_ns:
+        sub = df[(df.ts_ns >= w) & (df.ts_ns < w + win_ns)]
         if sub.empty:
             w += stride_ns
             continue
-        kf = extract_keystroke_features(sub[sub.dev_type == 'keyboard']) or {}
-        mf = extract_mouse_features(sub) or {}
-        # Skip windows with insufficient activity on both channels
-        kb_count = len(sub[sub.dev_type == 'keyboard'])
-        ms_count = len(sub[sub.dev_type == 'mouse'])
-        if kb_count < cfg.features.min_keyboard_events and ms_count < cfg.features.min_mouse_events:
+
+        kb = sub[sub.dev_type == 'keyboard']
+        ms = sub[sub.dev_type == 'mouse']
+        # A window with almost no activity on either channel says nothing
+        # about who is typing; skipping it leaves a hole, which is why
+        # build_sequences has to guard against idle gaps.
+        if (len(kb) < cfg.features.min_keyboard_events
+                and len(ms) < cfg.features.min_mouse_events):
             w += stride_ns
             continue
-        cf   = extract_context_features(sub.ts_utc, len(sub), cfg.features.window_sec)
+
         feats = {c: 0.0 for c in FEATURE_COLUMNS}
-        feats.update(kf); feats.update(mf); feats.update(cf)
-        cols         = ','.join(['session_id', 'window_start_ns', 'window_end_ns', 'source'] + FEATURE_COLUMNS)
-        vals         = [session_id, w, w + win_ns, 'fused'] + [feats[c] for c in FEATURE_COLUMNS]
-        placeholders = ','.join(['?'] * len(vals))
-        conn.execute(f'INSERT INTO feature_windows ({cols}) VALUES ({placeholders})', vals)
-        inserted += 1
+        feats.update(extract_keystroke_features(kb) or {})
+        feats.update(extract_mouse_features(sub) or {})
+        feats.update(extract_context_features(sub.ts_utc, len(sub), cfg.features.window_sec))
+
+        cols = ['session_id', 'enrollment_id', 'window_start_ns', 'window_end_ns', 'source']
+        vals = [session_id, enrollment_id, w, w + win_ns, 'fused']
+        vals += [float(feats[c]) for c in FEATURE_COLUMNS]
+        placeholders = ','.join(['?'] * (len(cols) + len(FEATURE_COLUMNS)))
+        res = conn.execute(
+            f'INSERT OR IGNORE INTO feature_windows '
+            f'({",".join(cols + FEATURE_COLUMNS)}) VALUES ({placeholders})',
+            vals,
+        ).fetchone()
+        inserted += int(res[0]) if res else 0
         w += stride_ns
+
     return inserted
 
 
-def build_sequences(conn, session_id, cfg) -> int:
-    """Build sliding sequences of length *seq_len* from feature windows and
-    insert them into *fused_sequences* (deduplication via dedup_key).
-    Returns the number of unique sequences produced."""
-    df = conn.execute(
-        'SELECT * FROM feature_windows WHERE session_id = ? AND source = ? ORDER BY window_end_ns',
-        [session_id, 'fused']
-    ).fetchdf()
-    if df.empty or len(df) < cfg.model.seq_len:
-        return 0
-    dedup_gap_ns = int(cfg.features.dedup_gap_sec * 1e9)
-    inserted = 0
-    for i in range(cfg.model.seq_len - 1, len(df)):
-        seq     = df.iloc[i - cfg.model.seq_len + 1:i + 1][FEATURE_COLUMNS].fillna(0.0).to_numpy(dtype=float).tolist()
-        seq_end = int(df.iloc[i].window_end_ns)
-        dedup_key = seq_end // dedup_gap_ns
-        try:
-            conn.execute(
-                'INSERT OR IGNORE INTO fused_sequences '
-                '(session_id, seq_end_ns, seq_len, data_json, dedup_key) VALUES (?, ?, ?, ?, ?)',
-                [session_id, seq_end, cfg.model.seq_len, json.dumps(seq), dedup_key]
-            )
-            inserted += 1
-        except Exception:
-            pass
-    return max(0, len(df) - cfg.model.seq_len + 1)
+def build_sequences(conn, session_id: str, enrollment_id: str, cfg: Settings) -> int:
+    """Assemble sliding sequences of seq_len windows. Returns rows inserted.
 
-
-def run_pipeline(session_filter: str | None = None) -> None:
-    """Run the full feature extraction pipeline.
-
-    Args:
-        session_filter: If given, process only this session UUID.
-                        Otherwise processes all sessions that have raw events.
+    A sequence is rejected when two adjacent windows are further apart than
+    max_seq_gap_sec: windows below the activity threshold are dropped, so the
+    rows are not time-contiguous, and without this guard a single sequence
+    could splice Monday morning onto Tuesday evening.
     """
-    cfg  = load_settings()
-    conn = duckdb.connect(cfg.storage.db_path)
-    if session_filter:
-        sessions = [(session_filter,)]
-    else:
-        sessions = conn.execute(
-            'SELECT DISTINCT session_id FROM raw_events ORDER BY session_id'
-        ).fetchall()
-    if not sessions:
-        print('No sessions with raw events found. Run: behavioral-collector')
-        return
-    total_windows = 0
-    total_seqs    = 0
-    for (sid,) in sessions:
-        n_raw = conn.execute(
-            'SELECT COUNT(*) FROM raw_events WHERE session_id = ?', [sid]
-        ).fetchone()[0]
-        logger.info(f'Session {str(sid)[:8]}…  raw_events={n_raw:,}')
-        w = build_feature_windows(conn, str(sid), cfg)
-        s = build_sequences(conn, str(sid), cfg)
-        logger.info(f'  → windows={w}  sequences={s}')
-        total_windows += w
-        total_seqs    += s
-    n_total_seq = conn.execute('SELECT COUNT(*) FROM fused_sequences').fetchone()[0]
-    print(f'Done: {total_windows} new windows, {total_seqs} new sequences')
-    print(f'Total sequences in DB: {n_total_seq}')
-    needed = cfg.model.seq_len * 5
-    if n_total_seq < needed:
-        print(f'⚠️  Not enough sequences ({n_total_seq}/{needed}). Collect more data and re-run.')
-    else:
-        print(f'✅  Sufficient data. You can now run: behavioral-train')
+    seq_len = cfg.model.seq_len
+    df = conn.execute(
+        'SELECT window_start_ns, window_end_ns, '
+        + ','.join(FEATURE_COLUMNS)
+        + ' FROM feature_windows WHERE session_id = ? AND source = ? '
+        'ORDER BY window_end_ns',
+        [session_id, 'fused'],
+    ).fetchdf()
+    if len(df) < seq_len:
+        return 0
+
+    watermark = conn.execute(
+        'SELECT max(seq_end_ns) FROM fused_sequences WHERE session_id = ?',
+        [session_id],
+    ).fetchone()[0]
+    watermark = -1 if watermark is None else int(watermark)
+
+    dedup_gap_ns = int(cfg.features.dedup_gap_sec * 1e9)
+    max_gap_ns = int(cfg.features.max_seq_gap_sec * 1e9)
+    starts = df.window_start_ns.to_numpy(dtype=np.int64)
+    feats = df[FEATURE_COLUMNS].fillna(0.0).to_numpy(dtype=float)
+
+    inserted = 0
+    for i in range(seq_len - 1, len(df)):
+        seq_end = int(df.window_end_ns.iloc[i])
+        if seq_end <= watermark:
+            continue
+
+        lo = i - seq_len + 1
+        if np.max(np.diff(starts[lo:i + 1])) > max_gap_ns:
+            continue  # spans an idle gap
+
+        try:
+            res = conn.execute(
+                'INSERT OR IGNORE INTO fused_sequences '
+                '(session_id, enrollment_id, seq_end_ns, seq_len, data_json, dedup_key) '
+                'VALUES (?, ?, ?, ?, ?, ?)',
+                [session_id, enrollment_id, seq_end, seq_len,
+                 json.dumps(feats[lo:i + 1].tolist()), seq_end // dedup_gap_ns],
+            ).fetchone()
+            inserted += int(res[0]) if res else 0
+        except duckdb.Error as exc:
+            logger.warning(f'Sequence insert failed at seq_end={seq_end}: {exc}')
+
+    return inserted

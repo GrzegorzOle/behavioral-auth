@@ -1,0 +1,16 @@
+[Unit]
+Description=Behavioral authentication daemon
+Documentation=https://github.com/
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/opt/behavioral-auth/.venv/bin/behavioral-authd
+Restart=always
+RestartSec=5
+# The daemon needs the input group to read evdev, and video for the camera.
+# It never locks the session, so it needs no privileged capability.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
