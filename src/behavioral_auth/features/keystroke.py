@@ -30,7 +30,10 @@ def extract_keystroke_features(df) -> dict | None:
     if k.empty:
         return None
     downs, dwell, flight = {}, [], []
-    last_down = None; backspace = 0; repeat = 0; total = 0
+    last_down = None
+    backspace = 0
+    repeat = 0
+    total = 0
     for r in k.itertuples(index=False):
         total += 1
         if r.ev_value == 2:
