@@ -159,9 +159,13 @@ running, the same commands operate on the database directly.
 
 ## Configuration
 
-`config/config.yaml`, with a `config.<mode>.yaml` overlay merged on top
-(`config.dev.yaml` shrinks every gate so a full run takes minutes). Point
+`config/config.yaml`, with a `config.<mode>.yaml` overlay merged on top. Point
 `BEHAVIORAL_AUTH_CONFIG` at a file to override the search path.
+
+`general.mode` defaults to **`prod`** — the gates below, which take hours of real
+use to satisfy. Setting it to `dev` merges `config.dev.yaml` and shrinks every one
+of them so the whole path runs in minutes; a pattern promoted under those gates is
+a smoke test, not something to rely on, and the daemon says so loudly on startup.
 
 The knobs that decide behaviour:
 
