@@ -67,6 +67,7 @@ class MonitorController:
         self.anom = Run()
         self.norm = Run()
         self.face_stranger_streak = 0
+        self.last_stranger_at: float | None = None
         self.alarm: Alarm | None = None
         self.recent_ratios: list[float] = []
         self.last_ratio: float | None = None
@@ -76,6 +77,7 @@ class MonitorController:
         self.anom.clear()
         self.norm.clear()
         self.face_stranger_streak = 0
+        self.last_stranger_at = None
         self.alarm = None
         self.recent_ratios.clear()
         self.last_ratio = None
@@ -87,10 +89,31 @@ class MonitorController:
         self.face_state = state
         if state is FaceState.STRANGER:
             self.face_stranger_streak += 1
+            self.last_stranger_at = time.monotonic()
         elif state is FaceState.MATCH:
             self.face_stranger_streak = 0
+            self.last_stranger_at = None
         # UNKNOWN tells us nothing, so it neither builds nor breaks the streak.
-        return self.face_stranger_streak >= self.cfg.face.stranger_consecutive
+        return self._face_says_stranger()
+
+    def _face_says_stranger(self) -> bool:
+        """Whether the camera is currently evidence that someone else is there.
+
+        A stranger sighting only counts while it is recent. Only a MATCH resets
+        the streak, and a camera that can no longer see anyone — covered, dark,
+        grabbed by another process — reports UNKNOWN forever. Without an expiry
+        a face alarm would need a MATCH to clear that the camera is in no
+        position to produce, and would therefore never clear at all.
+        """
+        if self.face_stranger_streak < self.cfg.face.stranger_consecutive:
+            return False
+        if self.last_stranger_at is None:
+            return False
+        if time.monotonic() - self.last_stranger_at >= self.cfg.face.stranger_stale_sec:
+            self.face_stranger_streak = 0
+            self.last_stranger_at = None
+            return False
+        return True
 
     # ── behavioural channel ───────────────────────────────────────────────
 
@@ -117,7 +140,7 @@ class MonitorController:
         """The reason to enter ALARM, or None."""
         if self.alarm:
             return None
-        if self.face_stranger_streak >= self.cfg.face.stranger_consecutive:
+        if self._face_says_stranger():
             return 'face'
         a = self.cfg.alarm
         if self.anom.count >= a.enter_consecutive and self.anom.span_sec >= a.enter_min_span_sec:
@@ -127,7 +150,7 @@ class MonitorController:
     def should_clear(self) -> bool:
         if not self.alarm:
             return False
-        if self.face_stranger_streak >= self.cfg.face.stranger_consecutive:
+        if self._face_says_stranger():
             return False
         a = self.cfg.alarm
         return (self.norm.count >= a.clear_consecutive

@@ -336,8 +336,7 @@ class Daemon:
             ratios = self.pattern.ratios(X)
             errors = self.pattern.errors(X)
             for (seq_end_ns, _), ratio, err in zip(rows, ratios, errors):
-                verdict = classify(float(ratio), self.monitor.face_state,
-                                   self.cfg.alarm.clear_hysteresis)
+                verdict = classify(float(ratio), self.cfg.alarm.clear_hysteresis)
                 self.monitor.observe(verdict, float(ratio), int(seq_end_ns))
                 self._record_score(eid, int(seq_end_ns), float(err), float(ratio), verdict)
             self._last_scored_ns = int(rows[-1][0])

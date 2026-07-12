@@ -80,6 +80,7 @@ face:
   retrain_every_n_samples: 30
   check_interval_sec: 30
   stranger_consecutive: 3
+  stranger_stale_sec: 300       # stranger sightings stop counting once this old
   keep_samples: true
   min_face_width: 100
   min_sharpness: 60.0

@@ -170,6 +170,10 @@ class FaceCfg(BaseModel):
     retrain_every_n_samples: int = 30
     check_interval_sec: int = 30
     stranger_consecutive: int = 3
+    # How long a run of stranger sightings keeps counting as evidence. Only a
+    # MATCH resets the streak, and a camera that sees nobody reports UNKNOWN
+    # forever — so without an expiry a face alarm could never be cleared.
+    stranger_stale_sec: int = 300
     keep_samples: bool = True
     # Quality gates for silent background capture.
     min_face_width: int = 100
