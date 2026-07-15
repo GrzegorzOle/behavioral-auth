@@ -198,11 +198,17 @@ def test_build_sink_selects_the_event_log_sink(cfg):
     assert sink.log_type == 'Application'
 
 
-def test_event_log_send_admits_failure_when_pywin32_is_absent():
-    """On a box without pywin32 (every non-Windows one) the sink must raise, so
-    the spool holds the event back rather than pretending it was delivered."""
+def test_event_log_send_admits_failure_when_pywin32_is_absent(monkeypatch):
+    """Without pywin32 the sink must raise, so the spool holds the event back
+    rather than pretending it was delivered. Forced here (setting the module to
+    None makes `import` raise ImportError) so the assertion holds on Windows CI
+    too, where pywin32 is actually installed."""
+    import sys
+
     from behavioral_auth.siem.sinks import EventLogSink
 
+    monkeypatch.setitem(sys.modules, 'win32evtlogutil', None)
+    monkeypatch.setitem(sys.modules, 'pywintypes', None)
     with pytest.raises(SinkError):
         EventLogSink('behavioral-auth').send(
             Event(category=Category.OPS, action='daemon_started'))

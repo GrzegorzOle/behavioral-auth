@@ -7,6 +7,10 @@ opencv, onnxruntime) in the bundle exactly once instead of four times.
 
 It also accepts the command as the first argument (``<binary> authd ...``), so a
 bare AppImage whose ``argv[0]`` is the image name still reaches every command.
+
+On Windows the four commands are real ``.exe`` files (symlinks need privilege
+there), so the executable's own ``.exe`` suffix is stripped before the argv[0]
+lookup — ``behavioral-authd.exe`` has to resolve to ``behavioral-authd``.
 """
 
 import importlib
@@ -28,7 +32,7 @@ def _run(name: str) -> None:
 
 
 def main() -> None:
-    name = os.path.basename(sys.argv[0])
+    name = os.path.splitext(os.path.basename(sys.argv[0]))[0]   # drop .exe on Windows
     if name in _COMMANDS:
         _run(name)
         return
