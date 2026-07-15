@@ -41,9 +41,17 @@ def _print(conn, cfg) -> None:
     meta_path = Path(cfg.model.metadata_path)
     if meta_path.exists():
         meta = json.loads(meta_path.read_text())
-        print(f'  próg anomalii {meta["threshold"]:.4f}  '
-              f'(trening {meta["n_train"]} sekwencji, holdout {meta["n_holdout"]})')
-        print(f'  separacja od syntetycznych negatywów: {meta["separation"]:.1f}x')
+        # The full metadata is written atomically at promotion; a file that
+        # lacks these keys is from an older format (a pre-0.3.0 leftover), not a
+        # half-written one. Don't crash on it — it is overwritten at the next
+        # promotion anyway.
+        if all(k in meta for k in ('threshold', 'n_train', 'n_holdout', 'separation')):
+            print(f'  próg anomalii {meta["threshold"]:.4f}  '
+                  f'(trening {meta["n_train"]} sekwencji, holdout {meta["n_holdout"]})')
+            print(f'  separacja od syntetycznych negatywów: {meta["separation"]:.1f}x')
+        else:
+            print('  (metadane modelu w starym formacie — pominięto; '
+                  'zostaną nadpisane przy następnej promocji)')
 
     cycles = conn.execute(
         'SELECT cycle_no, pass_rate, error_ratio, separation, stable, promoted '
