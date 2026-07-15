@@ -20,6 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # appimagetool needs mksquashfs, and the type-2 runtime it embeds links
+      # against FUSE 2; ubuntu-22.04 runners ship neither. Without these the
+      # "Build AppImage" step fails even with APPIMAGE_EXTRACT_AND_RUN.
+      - name: Install AppImage build deps
+        run: sudo apt-get update && sudo apt-get install -y libfuse2 squashfs-tools
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
