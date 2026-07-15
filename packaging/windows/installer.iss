@@ -1,11 +1,11 @@
-; Inno Setup script — installer for the behavioural-auth Windows bundle.
+; Inno Setup script -- installer for the behavioural-auth Windows bundle.
 ;
 ; Wraps the one-folder PyInstaller output (dist\behavioral-auth\, built from
 ; packaging/windows/behavioral-auth-windows.spec) into a single setup .exe that:
 ;
 ;   * installs the suite under Program Files;
 ;   * drops an editable config in C:\ProgramData\behavioral-auth\config.yaml
-;     (kept across upgrades — never clobbers the user's edits) and points
+;     (kept across upgrades -- never clobbers the user's edits) and points
 ;     BEHAVIORAL_AUTH_CONFIG at it, machine-wide, so both the service and the CLI
 ;     read it;
 ;   * registers behavioral-auth-service.exe with the Service Control Manager
@@ -16,7 +16,7 @@
 ;
 ; Build (on Windows, after the PyInstaller onedir exists):
 ;     iscc /DMyAppVersion=0.3.0 packaging\windows\installer.iss
-; Not runtime-verified on a real Windows box yet — see Planned work, Stage 2.
+; Not runtime-verified on a real Windows box yet -- see Planned work, Stage 2.
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.4.0"
