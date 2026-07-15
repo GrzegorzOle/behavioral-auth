@@ -16,6 +16,7 @@ import json
 import os
 import signal
 import socket
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -143,6 +144,15 @@ class Daemon:
             self.source = SyntheticSource(
                 self.writer, self.session_id, self.synthetic, self.synthetic_speed)
             self.tasks.append(asyncio.create_task(self.source.run()))
+            return
+
+        if sys.platform == 'win32':
+            # Windows has no evdev; a global pynput hook produces the same event
+            # rows (collector/windows_source.py). Imported here so pynput is only
+            # touched on Windows and Linux imports stay evdev-only.
+            from behavioral_auth.collector.windows_source import run_windows_hook
+            self.tasks.append(asyncio.create_task(
+                run_windows_hook(self.writer, self.session_id)))
             return
 
         devices = detect_devices(self.cfg.collector.devices)
