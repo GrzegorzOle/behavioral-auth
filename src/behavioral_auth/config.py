@@ -7,6 +7,7 @@ next to the base file is deep-merged on top of it.
 """
 
 import os
+import sys
 from pathlib import Path
 
 import yaml
@@ -268,9 +269,26 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def config_path() -> str:
-    """Resolve the config file path, honouring BEHAVIORAL_AUTH_CONFIG."""
+    """Resolve the config file path, honouring BEHAVIORAL_AUTH_CONFIG.
+
+    In a PyInstaller bundle two extra locations join the search: a config.yaml
+    the user drops next to the executable — which overrides the default — and the
+    read-only default shipped inside the bundle, tried last so the app still runs
+    out of the box when the user has supplied nothing.
+    """
     env = os.environ.get('BEHAVIORAL_AUTH_CONFIG')
-    candidates = [env, *_SEARCH_PATHS] if env else _SEARCH_PATHS
+    frozen = getattr(sys, 'frozen', False)
+
+    candidates: list[str | None] = [env] if env else []
+    if frozen:
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates += [str(exe_dir / 'config.yaml'),
+                       str(exe_dir / 'config' / 'config.yaml')]
+    candidates += _SEARCH_PATHS
+    if frozen:
+        bundle_root = Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent))
+        candidates.append(str(bundle_root / 'config' / 'config.yaml'))
+
     for candidate in candidates:
         if candidate and Path(candidate).exists():
             return candidate
