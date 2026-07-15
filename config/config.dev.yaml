@@ -32,3 +32,4 @@ face:
   sample_interval_sec: 5
   retrain_every_n_samples: 6
   check_interval_sec: 10
+  stranger_stale_sec: 30

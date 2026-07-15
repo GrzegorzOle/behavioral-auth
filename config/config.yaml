@@ -80,9 +80,64 @@ face:
   retrain_every_n_samples: 30
   check_interval_sec: 30
   stranger_consecutive: 3
+  stranger_stale_sec: 300       # stranger sightings stop counting once this old
   keep_samples: true
   min_face_width: 100
   min_sharpness: 60.0
   min_brightness: 40.0
   max_brightness: 220.0
   self_confidence_max: 90.0
+
+# Forwarding to a SIEM. OFF unless you turn it on — while `enabled` is false no
+# socket is opened anywhere in the tree, which is what lets this daemon claim it
+# does not talk to the network.
+#
+# What is forwarded: alarms (raised and cleared), state transitions, and the
+# operations that matter — reset, learn-more, pause, start, stop. A pattern reset
+# is how someone makes this system forget who the owner is, so a SIEM hears about
+# it. Per-sequence scores are NOT forwarded; at a 5 s stride they would be
+# hundreds of events an hour.
+#
+# What never leaves the machine, whatever you set here: key codes, mouse
+# coordinates, face crops, feature vectors. Events carry verdicts and ratios,
+# not the behaviour they were computed from.
+siem:
+  enabled: false
+  sink: "syslog"                # syslog | wazuh
+  ident: "behavioral-auth"
+  facility: 10                  # authpriv
+
+  # sink: syslog — write to the local syslog socket. If a wazuh-agent is
+  # installed it takes the line from there, so retries, buffering and TLS to the
+  # manager are its job. Prefer this wherever an agent exists.
+  socket_path: "/dev/log"
+
+  # sink: wazuh — talk straight to the manager's syslog listener, for a box with
+  # no agent. UDP sends are unacknowledged: they "succeed" whether or not anyone
+  # is listening, so the spool cannot protect them. Use tcp if the trail matters.
+  host: ""
+  port: 514
+  protocol: "tcp"               # udp | tcp
+
+  # With forwarding on, alarms need not also be kept in DuckDB. Detection is
+  # unaffected — the alarm lifecycle lives in memory — but `behavioral-report`
+  # then has no local alarms to show you.
+  #
+  # Read this before trusting it to mean "no local copy". It removes ONE local
+  # copy, not all of them:
+  #   * with sink: syslog the event goes to /dev/log, so it also lands in
+  #     journald/rsyslog on this machine and stays for as long as your system's
+  #     log retention says. sink: wazuh bypasses the local syslog.
+  #   * anything the SIEM has not acknowledged sits in the spool below until it
+  #     does. A SIEM down for a day means a day of alarms in that file.
+  # An event cannot both survive a broken link and leave no local trace. This
+  # daemon chooses not to lose the event.
+  store_alarms_locally: true
+
+  # Undelivered events wait here and drain on a later tick, so a SIEM that is
+  # down cannot stop the daemon from watching the keyboard. Delivered events are
+  # removed. When the spool overflows, the oldest are dropped and the log says
+  # so. Delivery is at-least-once: the SIEM must tolerate a duplicate.
+  spool_path: "/var/lib/behavioral-auth/siem-spool.jsonl"
+  spool_max_events: 10000
+  flush_interval_sec: 10

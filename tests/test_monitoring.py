@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import pytest
 
+import time
 import uuid
 
-from behavioral_auth.daemon.monitoring import MonitorController
+from behavioral_auth.daemon.monitoring import Alarm, MonitorController
 from behavioral_auth.inference.fusion import FaceState, Verdict, classify
 
 SEC = 1_000_000_000
@@ -124,16 +125,54 @@ def test_a_recognised_face_breaks_the_stranger_streak(mon):
 # ── the classification rule itself ───────────────────────────────────────────
 
 def test_classify_uses_a_deadband():
-    assert classify(1.5, FaceState.MATCH, 0.2) is Verdict.ANOMALOUS
-    assert classify(0.5, FaceState.MATCH, 0.2) is Verdict.NORMAL
-    assert classify(0.9, FaceState.MATCH, 0.2) is Verdict.DEADBAND   # near the line
+    assert classify(1.5, 0.2) is Verdict.ANOMALOUS
+    assert classify(0.5, 0.2) is Verdict.NORMAL
+    assert classify(0.9, 0.2) is Verdict.DEADBAND   # near the line
 
 
-def test_classify_lets_the_face_channel_alarm_alone():
+def test_the_face_channel_alarms_alone_without_touching_the_behavioural_run(mon):
     """Behaviour can look perfectly normal while the wrong person sits there —
-    an impostor who happens to type like you is still an impostor."""
-    assert classify(0.1, FaceState.STRANGER, 0.2) is Verdict.ANOMALOUS
+    an impostor who happens to type like you is still an impostor. The camera
+    must be able to raise that alarm on its own, but through its own counter: a
+    face alarm attributed to behaviour announces a ratio that contradicts its
+    own message.
+    """
+    for i in range(6):
+        mon.observe(classify(0.25, 0.2), 0.25, i * 30 * SEC)   # plainly normal typing
+    assert mon.anom.count == 0
+    assert mon.should_raise() is None
+
+    for _ in range(mon.cfg.face.stranger_consecutive):
+        mon.observe_face(FaceState.STRANGER)
+
+    assert mon.should_raise() == 'face'
+    assert mon.anom.count == 0     # the behavioural run stays clean
 
 
-def test_classify_ignores_an_unknown_face():
-    assert classify(0.1, FaceState.UNKNOWN, 0.2) is Verdict.NORMAL
+def test_classify_ignores_the_face_entirely():
+    """A dark room or a busy camera must not degrade the behavioural detector."""
+    assert classify(0.1, 0.2) is Verdict.NORMAL
+
+
+def test_a_face_alarm_clears_once_the_sightings_go_stale(mon, monkeypatch):
+    """Only a MATCH resets the stranger streak, and a camera that can no longer
+    see anyone reports UNKNOWN forever. If stale sightings kept blocking the
+    clear, an alarm raised by the face channel would need a MATCH the covered
+    camera is in no position to produce — and would never clear at all.
+    """
+    clock = 1000.0
+    monkeypatch.setattr(time, 'monotonic', lambda: clock)
+
+    for _ in range(mon.cfg.face.stranger_consecutive):
+        mon.observe_face(FaceState.STRANGER)
+    assert mon.should_raise() == 'face'
+    mon.alarm = Alarm(alarm_id=str(uuid.uuid4()), reason='face', started_at=0.0)
+
+    _feed(mon, Verdict.NORMAL, n=5, step_sec=30)   # the owner is typing normally
+    mon.observe_face(FaceState.UNKNOWN)            # …and the camera now sees nobody
+
+    assert not mon.should_clear()                  # the sighting is still recent
+
+    clock += mon.cfg.face.stranger_stale_sec + 1
+    assert mon.should_clear()
+    assert mon.face_stranger_streak == 0

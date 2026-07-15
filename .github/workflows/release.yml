@@ -1,0 +1,79 @@
+name: release
+
+# Build the self-contained Linux AppImage. Runs on a version tag (attaches the
+# AppImage to the GitHub release) and on manual dispatch (artifact only).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write        # create a release and upload the AppImage to it
+
+jobs:
+  appimage:
+    # Pin to the oldest supported runner on purpose: an AppImage links against
+    # the build host's glibc, so building on an older one keeps it runnable on
+    # more targets. Do not bump to ubuntu-latest without weighing that.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # appimagetool needs mksquashfs, and the type-2 runtime it embeds links
+      # against FUSE 2; ubuntu-22.04 runners ship neither. Without these the
+      # "Build AppImage" step fails even with APPIMAGE_EXTRACT_AND_RUN.
+      - name: Install AppImage build deps
+        run: sudo apt-get update && sudo apt-get install -y libfuse2 squashfs-tools
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      # Creates .venv with the CPU-only torch wheel (requirements.txt pins it),
+      # all deps, pyinstaller (requirements-dev), and the editable install.
+      - name: Build venv
+        run: make venv
+
+      - name: Lint and test
+        run: |
+          make lint
+          make test
+
+      - name: Fetch appimagetool
+        run: |
+          curl -sSL -o "${RUNNER_TEMP}/appimagetool.AppImage" \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "${RUNNER_TEMP}/appimagetool.AppImage"
+
+      # build-appimage.sh already runs appimagetool with APPIMAGE_EXTRACT_AND_RUN,
+      # so the runner needs no FUSE.
+      - name: Build AppImage
+        run: make appimage
+        env:
+          APPIMAGETOOL: ${{ runner.temp }}/appimagetool.AppImage
+
+      # --help exits in argparse before any config/DB is touched, so this needs
+      # no /var/lib state — yet it still exercises the whole frozen import graph
+      # (torch, onnx, cv2, duckdb).
+      - name: Smoke-test the AppImage
+        run: |
+          APPIMAGE_EXTRACT_AND_RUN=1 dist/behavioral-auth-x86_64.AppImage authd --help
+          test -x dist/behavioral-auth-x86_64.AppImage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: behavioral-auth-x86_64.AppImage
+          path: dist/behavioral-auth-x86_64.AppImage
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/behavioral-auth-x86_64.AppImage

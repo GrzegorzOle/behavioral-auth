@@ -4,7 +4,7 @@ PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
 export PYTHONPATH := src
 
-.PHONY: venv install run status report test lint demo clean
+.PHONY: venv install run status report test lint demo bundle appimage clean
 
 venv:
 	$(PYTHON) -m venv $(VENV)
@@ -38,5 +38,15 @@ test:
 lint:
 	$(VENV)/bin/ruff check src tests
 
+# Self-contained one-folder Linux bundle (torch CPU, no CUDA) with every
+# dependency inside. Output: dist/behavioral-auth/. See packaging/.
+bundle:
+	PYINSTALLER=$(VENV)/bin/pyinstaller bash packaging/build-linux.sh
+
+# Single-file AppImage wrapping the bundle. Needs appimagetool (set APPIMAGETOOL
+# to its path). Output: dist/behavioral-auth-x86_64.AppImage.
+appimage:
+	PYINSTALLER=$(VENV)/bin/pyinstaller bash packaging/build-appimage.sh
+
 clean:
-	rm -rf $(VENV) .pytest_cache .ruff_cache
+	rm -rf $(VENV) .pytest_cache .ruff_cache build dist

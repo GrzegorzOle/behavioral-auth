@@ -7,10 +7,11 @@ next to the base file is deep-merged on top of it.
 """
 
 import os
+import sys
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # The 21 features persisted per window. Order is significant: it defines the
 # column order of every feature vector written to feature_windows.
@@ -170,6 +171,10 @@ class FaceCfg(BaseModel):
     retrain_every_n_samples: int = 30
     check_interval_sec: int = 30
     stranger_consecutive: int = 3
+    # How long a run of stranger sightings keeps counting as evidence. Only a
+    # MATCH resets the streak, and a camera that sees nobody reports UNKNOWN
+    # forever — so without an expiry a face alarm could never be cleared.
+    stranger_stale_sec: int = 300
     keep_samples: bool = True
     # Quality gates for silent background capture.
     min_face_width: int = 100
@@ -185,6 +190,52 @@ class FaceCfg(BaseModel):
     howdy_timeout_sec: int = 3
 
 
+class SiemCfg(BaseModel):
+    """Optional forwarding to a SIEM. Off by default — see the note below.
+
+    While `enabled` is false the daemon opens no socket at all, which is what
+    lets the README promise that nothing leaves the machine. Turning this on is
+    a deliberate act, and it is the only thing in the tree that talks to a
+    network.
+    """
+    enabled: bool = False
+    sink: str = 'syslog'                   # syslog | wazuh
+    ident: str = 'behavioral-auth'
+    facility: int = 10                     # authpriv
+    # sink: syslog
+    socket_path: str = '/dev/log'
+    # sink: wazuh — the manager's syslog listener
+    host: str = ''
+    port: int = 514
+    protocol: str = 'tcp'                  # udp | tcp
+    # An event sent over UDP is unacknowledged: the send "succeeds" whether or
+    # not anyone is listening, so the spool cannot protect it. Use tcp if the
+    # audit trail matters.
+
+    # With forwarding on, alarms need not also be kept in DuckDB. The alarm
+    # lifecycle is held in memory, so this changes nothing about detection —
+    # only `behavioral-report`, which then has no local alarms to print.
+    store_alarms_locally: bool = True
+
+    spool_path: str = '/var/lib/behavioral-auth/siem-spool.jsonl'
+    spool_max_events: int = 10_000
+    flush_interval_sec: int = 10
+
+    @field_validator('sink')
+    @classmethod
+    def _known_sink(cls, v: str) -> str:
+        if v not in ('syslog', 'wazuh'):
+            raise ValueError(f"siem.sink must be 'syslog' or 'wazuh', got {v!r}")
+        return v
+
+    @field_validator('protocol')
+    @classmethod
+    def _known_protocol(cls, v: str) -> str:
+        if v not in ('udp', 'tcp'):
+            raise ValueError(f"siem.protocol must be 'udp' or 'tcp', got {v!r}")
+        return v
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
     general: GeneralCfg
@@ -196,6 +247,7 @@ class Settings(BaseModel):
     learning: LearningCfg = LearningCfg()
     alarm: AlarmCfg = AlarmCfg()
     face: FaceCfg = FaceCfg()
+    siem: SiemCfg = SiemCfg()
 
 
 _SEARCH_PATHS = [
@@ -217,9 +269,26 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def config_path() -> str:
-    """Resolve the config file path, honouring BEHAVIORAL_AUTH_CONFIG."""
+    """Resolve the config file path, honouring BEHAVIORAL_AUTH_CONFIG.
+
+    In a PyInstaller bundle two extra locations join the search: a config.yaml
+    the user drops next to the executable — which overrides the default — and the
+    read-only default shipped inside the bundle, tried last so the app still runs
+    out of the box when the user has supplied nothing.
+    """
     env = os.environ.get('BEHAVIORAL_AUTH_CONFIG')
-    candidates = [env, *_SEARCH_PATHS] if env else _SEARCH_PATHS
+    frozen = getattr(sys, 'frozen', False)
+
+    candidates: list[str | None] = [env] if env else []
+    if frozen:
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates += [str(exe_dir / 'config.yaml'),
+                       str(exe_dir / 'config' / 'config.yaml')]
+    candidates += _SEARCH_PATHS
+    if frozen:
+        bundle_root = Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent))
+        candidates.append(str(bundle_root / 'config' / 'config.yaml'))
+
     for candidate in candidates:
         if candidate and Path(candidate).exists():
             return candidate

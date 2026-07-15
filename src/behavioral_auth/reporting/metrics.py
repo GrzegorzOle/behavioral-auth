@@ -41,9 +41,17 @@ def _print(conn, cfg) -> None:
     meta_path = Path(cfg.model.metadata_path)
     if meta_path.exists():
         meta = json.loads(meta_path.read_text())
-        print(f'  próg anomalii {meta["threshold"]:.4f}  '
-              f'(trening {meta["n_train"]} sekwencji, holdout {meta["n_holdout"]})')
-        print(f'  separacja od syntetycznych negatywów: {meta["separation"]:.1f}x')
+        # The full metadata is written atomically at promotion; a file that
+        # lacks these keys is from an older format (a pre-0.3.0 leftover), not a
+        # half-written one. Don't crash on it — it is overwritten at the next
+        # promotion anyway.
+        if all(k in meta for k in ('threshold', 'n_train', 'n_holdout', 'separation')):
+            print(f'  próg anomalii {meta["threshold"]:.4f}  '
+                  f'(trening {meta["n_train"]} sekwencji, holdout {meta["n_holdout"]})')
+            print(f'  separacja od syntetycznych negatywów: {meta["separation"]:.1f}x')
+        else:
+            print('  (metadane modelu w starym formacie — pominięto; '
+                  'zostaną nadpisane przy następnej promocji)')
 
     cycles = conn.execute(
         'SELECT cycle_no, pass_rate, error_ratio, separation, stable, promoted '
@@ -68,15 +76,21 @@ def _print(conn, cfg) -> None:
         print(f'  odchylenie od progu: średnio {avg:.2f}x, maksymalnie {mx:.2f}x')
         print(f'  ocenionych jako anomalne: {anom} ({anom / n * 100:.1f}%)')
 
-    alarms = conn.execute(
-        'SELECT started_at, ended_at, reason, peak_ratio, n_scores '
-        'FROM alarms WHERE enrollment_id = ? ORDER BY started_at DESC LIMIT 10', [eid]
-    ).fetchall()
-    print(f'\nAlarmy: {len(alarms)}')
-    for started, ended, reason, peak, n in alarms:
-        span = f'{(ended - started).total_seconds():.0f}s' if ended else 'trwa'
-        print(f'  {started:%Y-%m-%d %H:%M}  powód={reason}  szczyt={peak:.2f}x  '
-              f'czas={span}  ({n} wyników)')
+    if cfg.siem.enabled and not cfg.siem.store_alarms_locally:
+        # An empty list here would read as "nothing happened", which is a lie the
+        # report must not tell: the alarms exist, they are just not here.
+        print(f'\nAlarmy: nie są przechowywane lokalnie (siem.store_alarms_locally: false).'
+              f'\n  Szukaj ich w SIEM-ie — sink={cfg.siem.sink}.')
+    else:
+        alarms = conn.execute(
+            'SELECT started_at, ended_at, reason, peak_ratio, n_scores '
+            'FROM alarms WHERE enrollment_id = ? ORDER BY started_at DESC LIMIT 10', [eid]
+        ).fetchall()
+        print(f'\nAlarmy: {len(alarms)}')
+        for started, ended, reason, peak, n in alarms:
+            span = f'{(ended - started).total_seconds():.0f}s' if ended else 'trwa'
+            print(f'  {started:%Y-%m-%d %H:%M}  powód={reason}  szczyt={peak:.2f}x  '
+                  f'czas={span}  ({n} wyników)')
 
     print('\nCzego tu NIE ma: wskaźników FAR/FRR. Nie da się ich policzyć — system '
           'widział\ndane tylko jednej osoby, więc nie ma z czym ich porównać.\n')

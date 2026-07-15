@@ -6,6 +6,10 @@ raised when behaviour looks wrong OR the camera sees someone else. Averaging
 them would let a dark room (no face) degrade the behavioural detector, and
 would let one weak channel dilute a strong signal from the other.
 
+The OR is applied in `MonitorController.should_raise`, where each channel has
+its own counter and the alarm records which one fired. `classify` below is the
+behavioural channel only — see the note in its docstring.
+
 `display_score` exists only so the console has a single number to show. It is
 not the decision rule.
 """
@@ -27,17 +31,22 @@ class Verdict(str, Enum):
     DEADBAND = 'deadband'  # between the two: counters hold, nothing decided
 
 
-def classify(ratio: float, face: FaceState, clear_hysteresis: float) -> Verdict:
-    """Classify one scored sequence.
+def classify(ratio: float, clear_hysteresis: float) -> Verdict:
+    """Classify one scored sequence on the behavioural channel alone.
 
     *ratio* is the reconstruction error over the calibrated threshold, so 1.0
     is exactly the threshold. Clearing requires dropping meaningfully below it
     — the gap between the two is a deadband where neither counter moves, which
     is what stops a score hovering at the threshold from flapping the alarm.
+
+    The face state is deliberately not an input here. It has its own counter and
+    can raise an alarm by itself; folding it in as well made a STRANGER mark
+    behaviourally normal sequences ANOMALOUS, so a camera alarm was attributed
+    to behaviour and announced with a ratio that contradicted the message.
     """
-    if ratio > 1.0 or face is FaceState.STRANGER:
+    if ratio > 1.0:
         return Verdict.ANOMALOUS
-    if ratio < 1.0 - clear_hysteresis and face is not FaceState.STRANGER:
+    if ratio < 1.0 - clear_hysteresis:
         return Verdict.NORMAL
     return Verdict.DEADBAND
 

@@ -27,6 +27,7 @@ from loguru import logger
 
 from behavioral_auth.config import Settings
 from behavioral_auth.inference.fusion import FaceState, Verdict
+from behavioral_auth.siem import Category, NullForwarder, Severity
 
 
 @dataclass
@@ -62,11 +63,13 @@ class Alarm:
 
 
 class MonitorController:
-    def __init__(self, cfg: Settings):
+    def __init__(self, cfg: Settings, siem=None):
         self.cfg = cfg
+        self.siem = siem or NullForwarder()
         self.anom = Run()
         self.norm = Run()
         self.face_stranger_streak = 0
+        self.last_stranger_at: float | None = None
         self.alarm: Alarm | None = None
         self.recent_ratios: list[float] = []
         self.last_ratio: float | None = None
@@ -76,6 +79,7 @@ class MonitorController:
         self.anom.clear()
         self.norm.clear()
         self.face_stranger_streak = 0
+        self.last_stranger_at = None
         self.alarm = None
         self.recent_ratios.clear()
         self.last_ratio = None
@@ -87,10 +91,31 @@ class MonitorController:
         self.face_state = state
         if state is FaceState.STRANGER:
             self.face_stranger_streak += 1
+            self.last_stranger_at = time.monotonic()
         elif state is FaceState.MATCH:
             self.face_stranger_streak = 0
+            self.last_stranger_at = None
         # UNKNOWN tells us nothing, so it neither builds nor breaks the streak.
-        return self.face_stranger_streak >= self.cfg.face.stranger_consecutive
+        return self._face_says_stranger()
+
+    def _face_says_stranger(self) -> bool:
+        """Whether the camera is currently evidence that someone else is there.
+
+        A stranger sighting only counts while it is recent. Only a MATCH resets
+        the streak, and a camera that can no longer see anyone — covered, dark,
+        grabbed by another process — reports UNKNOWN forever. Without an expiry
+        a face alarm would need a MATCH to clear that the camera is in no
+        position to produce, and would therefore never clear at all.
+        """
+        if self.face_stranger_streak < self.cfg.face.stranger_consecutive:
+            return False
+        if self.last_stranger_at is None:
+            return False
+        if time.monotonic() - self.last_stranger_at >= self.cfg.face.stranger_stale_sec:
+            self.face_stranger_streak = 0
+            self.last_stranger_at = None
+            return False
+        return True
 
     # ── behavioural channel ───────────────────────────────────────────────
 
@@ -117,7 +142,7 @@ class MonitorController:
         """The reason to enter ALARM, or None."""
         if self.alarm:
             return None
-        if self.face_stranger_streak >= self.cfg.face.stranger_consecutive:
+        if self._face_says_stranger():
             return 'face'
         a = self.cfg.alarm
         if self.anom.count >= a.enter_consecutive and self.anom.span_sec >= a.enter_min_span_sec:
@@ -127,7 +152,7 @@ class MonitorController:
     def should_clear(self) -> bool:
         if not self.alarm:
             return False
-        if self.face_stranger_streak >= self.cfg.face.stranger_consecutive:
+        if self._face_says_stranger():
             return False
         a = self.cfg.alarm
         return (self.norm.count >= a.clear_consecutive
@@ -137,28 +162,44 @@ class MonitorController:
 
     def raise_alarm(self, conn, enrollment_id: str, session_id: str, reason: str) -> Alarm:
         self.alarm = Alarm(alarm_id=str(uuid.uuid4()), reason=reason, started_at=time.time())
-        conn.execute(
-            'INSERT INTO alarms (alarm_id, enrollment_id, session_id, reason, peak_ratio, n_scores) '
-            'VALUES (?, ?, ?, ?, ?, ?)',
-            [self.alarm.alarm_id, enrollment_id, session_id, reason, self.last_ratio or 0.0, 0],
-        )
+        if self.siem.store_alarms_locally():
+            conn.execute(
+                'INSERT INTO alarms (alarm_id, enrollment_id, session_id, reason, peak_ratio, n_scores) '
+                'VALUES (?, ?, ?, ?, ?, ?)',
+                [self.alarm.alarm_id, enrollment_id, session_id, reason, self.last_ratio or 0.0, 0],
+            )
         detail = (f'behaviour deviates from the learned pattern for '
                   f'{self.anom.span_sec:.0f}s (ratio up to {self.last_ratio:.2f}x threshold)'
                   if reason == 'behavioral'
                   else 'the camera does not recognise the person at the keyboard')
         logger.error(f'ALARM: {detail}. No action taken — this system never locks the session.')
+        self.siem.emit(
+            Category.ALARM, 'raised', severity=Severity.ALERT,
+            alarm_id=self.alarm.alarm_id, reason=reason,
+            ratio=round(self.last_ratio or 0.0, 3),
+            span_sec=round(self.anom.span_sec, 1),
+            face_state=self.face_state.value,
+            summary=detail,
+        )
         self.notify()
         return self.alarm
 
     def clear_alarm(self, conn) -> None:
         if not self.alarm:
             return
-        conn.execute(
-            'UPDATE alarms SET ended_at = now(), peak_ratio = ?, n_scores = ? WHERE alarm_id = ?',
-            [self.alarm.peak_ratio, self.alarm.n_scores, self.alarm.alarm_id],
-        )
+        if self.siem.store_alarms_locally():
+            conn.execute(
+                'UPDATE alarms SET ended_at = now(), peak_ratio = ?, n_scores = ? WHERE alarm_id = ?',
+                [self.alarm.peak_ratio, self.alarm.n_scores, self.alarm.alarm_id],
+            )
         held = time.time() - self.alarm.started_at
         logger.info(f'Alarm cleared after {held:.0f}s — behaviour matches the pattern again')
+        self.siem.emit(
+            Category.ALARM, 'cleared', severity=Severity.NOTICE,
+            alarm_id=self.alarm.alarm_id, reason=self.alarm.reason,
+            held_sec=round(held, 1), peak_ratio=round(self.alarm.peak_ratio, 3),
+            n_scores=self.alarm.n_scores,
+        )
         self.alarm = None
 
     def notify(self) -> None:
