@@ -77,7 +77,13 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/behavioral-auth-x86_64.AppImage
+          # The AppImage plus the bilingual usage guide (docs/USAGE.md), so the
+          # release carries the how-to-install-and-run instructions alongside the
+          # binaries. Attached from this job only — the windows job adds the
+          # installer separately.
+          files: |
+            dist/behavioral-auth-x86_64.AppImage
+            docs/USAGE.md
 
   # The Windows one-folder bundle wrapped into an Inno Setup installer. Mirrors
   # the AppImage job on a windows runner. Not verified against a real desktop
