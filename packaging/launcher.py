@@ -31,7 +31,23 @@ def _run(name: str) -> None:
     getattr(importlib.import_module(module), func)()
 
 
+def _force_utf8_stdio() -> None:
+    """On Windows the console/pipe encoding defaults to a legacy codepage
+    (cp1252), so any non-ASCII output — the CLI's Polish status text, the ●/○
+    glyphs, alarm messages — raises UnicodeEncodeError and kills the command.
+    Force UTF-8 with a replacing fallback so output degrades to '?' rather than
+    crashing. Windows-only: Linux already uses UTF-8 and this leaves it alone."""
+    if sys.platform != 'win32':
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError):
+            pass
+
+
 def main() -> None:
+    _force_utf8_stdio()
     name = os.path.splitext(os.path.basename(sys.argv[0]))[0]   # drop .exe on Windows
     if name in _COMMANDS:
         _run(name)
