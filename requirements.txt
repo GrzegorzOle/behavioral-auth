@@ -6,6 +6,7 @@ duckdb==1.1.3
 # Input capture is platform-split; pip installs whichever matches the OS.
 evdev==1.7.0 ; sys_platform == "linux"     # Linux: reads /dev/input
 pynput==1.7.6 ; sys_platform == "win32"    # Windows: global keyboard/mouse hook
+pywin32==306 ; sys_platform == "win32"     # Windows: Event Log sink + service (SCM)
 loguru==0.7.3
 numpy==2.0.1
 onnx==1.16.2

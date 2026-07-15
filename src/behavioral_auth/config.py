@@ -199,11 +199,15 @@ class SiemCfg(BaseModel):
     network.
     """
     enabled: bool = False
-    sink: str = 'syslog'                   # syslog | wazuh
+    sink: str = 'syslog'                   # syslog | eventlog | wazuh
     ident: str = 'behavioral-auth'
     facility: int = 10                     # authpriv
-    # sink: syslog
+    # sink: syslog (Linux)
     socket_path: str = '/dev/log'
+    # sink: eventlog (Windows) — the box's own Event Log; a Wazuh agent's
+    # windows-eventchannel picks it up, mirroring syslog+agent on Linux.
+    eventlog_source: str = 'behavioral-auth'
+    eventlog_log: str = 'Application'
     # sink: wazuh — the manager's syslog listener
     host: str = ''
     port: int = 514
@@ -224,8 +228,9 @@ class SiemCfg(BaseModel):
     @field_validator('sink')
     @classmethod
     def _known_sink(cls, v: str) -> str:
-        if v not in ('syslog', 'wazuh'):
-            raise ValueError(f"siem.sink must be 'syslog' or 'wazuh', got {v!r}")
+        if v not in ('syslog', 'eventlog', 'wazuh'):
+            raise ValueError(
+                f"siem.sink must be 'syslog', 'eventlog' or 'wazuh', got {v!r}")
         return v
 
     @field_validator('protocol')
