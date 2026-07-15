@@ -126,10 +126,15 @@ jobs:
 
       # --help exits in argparse before any config/DB is touched, yet still walks
       # the whole frozen import graph (torch, onnx, cv2, duckdb, pynput, pywin32).
+      # Check the exit code explicitly — a native crash does not fail a pwsh step
+      # on its own — and the installer independently.
       - name: Smoke-test the bundle
         run: |
           dist\behavioral-auth\behavioral-auth.exe --help
-          if (-not (Test-Path "dist\behavioral-auth-setup-${{ steps.ver.outputs.version }}.exe")) { throw "installer missing" }
+          if ($LASTEXITCODE -ne 0) { throw "behavioral-auth.exe --help exited $LASTEXITCODE" }
+          $setup = "dist\behavioral-auth-setup-${{ steps.ver.outputs.version }}.exe"
+          if (-not (Test-Path $setup)) { throw "installer missing: $setup" }
+          Write-Host "OK: bundle runs and installer present"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

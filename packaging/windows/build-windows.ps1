@@ -34,13 +34,28 @@ if (-not (Test-Path (Join-Path $Dist "behavioral-auth-service.exe"))) {
 }
 Write-Host ">> Bundle at: $Dist"
 
-$IsccPath = Get-Command $Iscc -ErrorAction SilentlyContinue
-if ($null -eq $IsccPath) {
-    Write-Warning ("Inno Setup compiler ($Iscc) not found -- skipping the installer. " +
-                   "Install it (choco install innosetup) and re-run, or ship the folder.")
+# Resolve ISCC.exe: PATH first, then the usual install dirs. The chocolatey
+# innosetup package installs the compiler but does NOT put a shim on PATH, so on
+# CI `iscc` is unresolvable even though Inno Setup is present -- look there too.
+$IsccCmd = Get-Command $Iscc -ErrorAction SilentlyContinue
+if ($null -ne $IsccCmd) {
+    $IsccExe = $IsccCmd.Source
+} else {
+    $candidates = @(
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles(x86)}\Inno Setup 5\ISCC.exe"
+    )
+    $IsccExe = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
+
+if (-not $IsccExe) {
+    Write-Warning ("Inno Setup compiler not found on PATH or in Program Files -- " +
+                   "skipping the installer. Install it (choco install innosetup) and re-run.")
     exit 0
 }
 
-Write-Host ">> Building installer with Inno Setup"
-& $Iscc "/DMyAppVersion=$Version" "packaging\windows\installer.iss"
+Write-Host ">> Building installer with Inno Setup: $IsccExe"
+& $IsccExe "/DMyAppVersion=$Version" "packaging\windows\installer.iss"
+if ($LASTEXITCODE -ne 0) { throw "iscc failed with exit code $LASTEXITCODE" }
 Write-Host ">> Done. Installer in dist\"
