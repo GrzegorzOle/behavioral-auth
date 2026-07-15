@@ -19,7 +19,7 @@
 ; Not runtime-verified on a real Windows box yet — see Planned work, Stage 2.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.3.0"
+  #define MyAppVersion "0.4.0"
 #endif
 
 #define MyAppName "behavioral-auth"
