@@ -39,6 +39,10 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputBaseFilename=behavioral-auth-setup-{#MyAppVersion}
+; Write the installer into the repo's dist\ (relative to this .iss), not Inno
+; Setup's default Output\ subdir -- that is where build-windows.ps1, the CI
+; smoke test and the upload step all look for it.
+OutputDir=..\..\dist
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

@@ -47,6 +47,17 @@ if ($null -ne $IsccCmd) {
         "${env:ProgramFiles(x86)}\Inno Setup 5\ISCC.exe"
     )
     $IsccExe = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    # Last resort: hunt for ISCC.exe anywhere under Program Files, so any Inno
+    # Setup version / install dir is covered.
+    if (-not $IsccExe) {
+        foreach ($base in @(${env:ProgramFiles(x86)}, ${env:ProgramFiles})) {
+            if ($base -and (Test-Path $base)) {
+                $found = Get-ChildItem -Path $base -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue |
+                         Select-Object -First 1
+                if ($found) { $IsccExe = $found.FullName; break }
+            }
+        }
+    }
 }
 
 if (-not $IsccExe) {
@@ -58,4 +69,12 @@ if (-not $IsccExe) {
 Write-Host ">> Building installer with Inno Setup: $IsccExe"
 & $IsccExe "/DMyAppVersion=$Version" "packaging\windows\installer.iss"
 if ($LASTEXITCODE -ne 0) { throw "iscc failed with exit code $LASTEXITCODE" }
-Write-Host ">> Done. Installer in dist\"
+
+# installer.iss writes to dist\ (OutputDir). Confirm it, so a silent mismatch
+# fails here with a clear message instead of surfacing later as "installer
+# missing" in the smoke test.
+$Installer = Join-Path $Root "dist\behavioral-auth-setup-$Version.exe"
+if (-not (Test-Path $Installer)) {
+    throw "iscc reported success but the installer is not at $Installer"
+}
+Write-Host ">> Done. Installer: $Installer"
