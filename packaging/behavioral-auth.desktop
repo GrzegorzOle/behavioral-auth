@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=behavioral-auth
+Comment=Local behavioural authentication daemon — learns how you type and warns on a mismatch
+Exec=behavioral-authd
+Icon=behavioral-auth
+Categories=Utility;Security;
+Terminal=true

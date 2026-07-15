@@ -1,0 +1,15 @@
+#!/bin/bash
+# AppImage entry point for the behavioural-auth suite.
+#
+# The bundle is a single multi-call binary (see packaging/launcher.py). We exec
+# it with a NEUTRAL argv[0] so the launcher does not read the image's own name
+# as a command and instead dispatches on the first argument. So:
+#
+#     ./behavioral-auth-x86_64.AppImage authd --console
+#     ./behavioral-auth-x86_64.AppImage status
+#     ./behavioral-auth-x86_64.AppImage report
+#
+# (the command may keep or drop the "behavioral-" prefix). With no command it
+# prints usage.
+HERE="$(dirname "$(readlink -f "${0}")")"
+exec -a behavioral-auth-suite "${HERE}/usr/bin/behavioral-authd" "$@"
