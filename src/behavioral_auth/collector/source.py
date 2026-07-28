@@ -33,9 +33,14 @@ async def run_evdev(path: str, writer, session_id: str) -> None:
 
     from behavioral_auth.collector.device_detector import is_keyboard_device
 
+    from behavioral_auth.collector.stack import device_id
+
     dev = evdev.InputDevice(path)
     dev_type = 'keyboard' if is_keyboard_device(dev) else 'mouse'
-    logger.info(f'Reading {path} ({dev.name}) as {dev_type}')
+    # vendor:product, not the path: /dev/input/eventN renumbers across boots and
+    # re-plugs, so it cannot identify the same keyboard after a dock cycle.
+    dev_id = device_id(dev.info.vendor, dev.info.product)
+    logger.info(f'Reading {path} ({dev.name}, {dev_id}) as {dev_type}')
 
     async for ev in dev.async_read_loop():
         if ev.type not in (evdev.ecodes.EV_KEY, evdev.ecodes.EV_REL,
@@ -45,7 +50,7 @@ async def run_evdev(path: str, writer, session_id: str) -> None:
         # thread cannot skew a single feature.
         ts_ns = ev.sec * 1_000_000_000 + ev.usec * 1_000
         ts_utc = datetime.fromtimestamp(ev.sec + ev.usec / 1e6, tz=timezone.utc)
-        writer.add((ts_ns, ts_utc, session_id, path, dev.name, dev_type,
+        writer.add((ts_ns, ts_utc, session_id, path, dev.name, dev_id, dev_type,
                     ev.type, ev.code, ev.value))
 
 
@@ -109,7 +114,13 @@ class SyntheticSource:
                 int(ts_ns),
                 datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc),
                 self.session_id,
-                f'/synthetic/{dev_type}', f'synthetic-{p.name}', dev_type,
+                f'/synthetic/{dev_type}', f'synthetic-{p.name}',
+                # Keyed on the modality, NOT on the profile: `set-profile` swaps
+                # the synthetic person mid-run, and that is a change of person,
+                # not a change of hardware. Keying on the profile would make the
+                # impostor arrive on an unknown stack, so the stack gate would
+                # suspend scoring and the demo would never reach ALARM.
+                f'synthetic:{dev_type}', dev_type,
                 ev_type, code, int(value),
             ))
 

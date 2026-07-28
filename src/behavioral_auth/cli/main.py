@@ -22,6 +22,7 @@ _STATE_LABEL = {
     State.MONITORING.value: (f'{GREEN}●{RESET}', 'NADZÓR — wzorzec zamrożony'),
     State.ALARM.value: (f'{RED}●{RESET}', 'ALARM — osoba nie odpowiada wzorcowi'),
     State.PAUSED.value: (f'{DIM}○{RESET}', 'PAUZA'),
+    State.SUSPENDED.value: (f'{YELLOW}○{RESET}', 'ZAWIESZONY — inny sprzęt niż w nauce'),
     State.BOOTSTRAP.value: (f'{DIM}○{RESET}', 'START'),
 }
 
@@ -91,6 +92,20 @@ def cmd_status(cfg, args) -> int:
         if snap.get('recent_ratios'):
             print(f'  {sparkline(snap["recent_ratios"])}')
         print(f'  twarz: {snap.get("face_state", "unknown")}')
+
+        stacks = snap.get('pattern_stacks') or []
+        if len(stacks) > 1:
+            print(f'  {YELLOW}wzorzec uczony na {len(stacks)} zestawach sprzętu — '
+                  f'jest przez to bardziej pobłażliwy{RESET}')
+        if snap['state'] == State.SUSPENDED.value:
+            print()
+            print(f'  {YELLOW}{BOLD}NIE PUNKTUJE{RESET}  bieżący sprzęt nie jest tym, '
+                  f'na którym wzorzec był uczony')
+            print(f'  {DIM}zbieranie danych trwa. "behavioral-auth learn-more" dołączy '
+                  f'ten zestaw do wzorca —{RESET}')
+            print(f'  {DIM}kosztem tego, że wzorzec obejmujący dwa zestawy jest '
+                  f'bardziej pobłażliwy{RESET}')
+
         if snap['state'] == State.ALARM.value:
             print()
             print(f'  {RED}{BOLD}ALARM{RESET}  powód: {snap.get("alarm_reason")}  '

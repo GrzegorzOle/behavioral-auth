@@ -31,6 +31,11 @@ class State(str, Enum):
     MONITORING = 'MONITORING'
     ALARM = 'ALARM'
     PAUSED = 'PAUSED'
+    # Distinct from PAUSED, which is the user's decision, and from MONITORING,
+    # which while not scoring would be a lie: the pattern was learned on other
+    # hardware, so there is nothing meaningful to compare against. Never an
+    # ALARM — "you undocked" is not something the user can act on.
+    SUSPENDED = 'SUSPENDED'
 
 
 @dataclass
@@ -69,6 +74,10 @@ class Snapshot:
     alarm_since: str | None = None
     alarm_reason: str | None = None
     alarm_peak_ratio: float | None = None
+
+    # Hardware stack
+    pattern_stacks: list[str] = field(default_factory=list)
+    stack_suspended_on: str | None = None
 
     last_error: str | None = None
 

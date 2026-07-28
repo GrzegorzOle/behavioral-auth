@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from behavioral_auth.collector.stack import describe
 from behavioral_auth.config import load_settings
 from behavioral_auth.db import open_db
 
@@ -52,6 +53,23 @@ def _print(conn, cfg) -> None:
         else:
             print('  (metadane modelu w starym formacie — pominięto; '
                   'zostaną nadpisane przy następnej promocji)')
+
+        # Which hardware the pattern is entitled to judge. More than one stack is
+        # not a richer pattern — it is a wider one, and a wider pattern accepts
+        # more. Absent for patterns promoted before stacks were recorded.
+        stacks = meta.get('stacks')
+        if stacks:
+            print(f'  zestawy sprzętu w nauce: {len(stacks)}')
+            for s in stacks:
+                print(f'    • {describe(s)}')
+            if len(stacks) > 1:
+                print('    UWAGA: wzorzec obejmujący więcej niż jeden zestaw ma szerszy '
+                      'rozrzut,')
+                print('    więc wyższy próg — jest BARDZIEJ pobłażliwy niż wzorzec '
+                      'uczony na jednym.')
+        elif 'stacks' in meta:
+            print('  zestawy sprzętu w nauce: brak zapisu (wzorzec sprzed tej wersji) '
+                  '— bramka sprzętowa nieaktywna')
 
     cycles = conn.execute(
         'SELECT cycle_no, pass_rate, error_ratio, separation, stable, promoted '

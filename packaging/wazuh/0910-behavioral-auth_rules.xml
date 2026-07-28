@@ -4,7 +4,7 @@
   Install on the MANAGER as /var/ossec/etc/rules/0910-behavioral-auth_rules.xml,
   then restart wazuh-manager.
 
-  Rule ids 100200-100212 sit in the user range (>= 100000); change them if that
+  Rule ids 100200-100217 sit in the user range (>= 100000); change them if that
   block is already taken on your manager.
 
   On the levels.
@@ -13,7 +13,9 @@
 
     12  someone other than the enrolled person appears to be at the keyboard,
         or the pattern that defines who that person is was destroyed
-     7  monitoring is knowingly blind (paused, or the daemon stopped)
+     7  monitoring is knowingly blind (paused, the daemon stopped, or the
+        hardware is not what the pattern was learned on), and a keyboard
+        attached while the machine was under watch
      5  the pattern was deliberately changed (learn-more)
      3  routine lifecycle
 
@@ -109,6 +111,57 @@
     <field name="category">^ops$</field>
     <field name="action">^daemon_started$</field>
     <description>behavioral-auth: daemon started (mode $(detail.mode))</description>
+  </rule>
+
+  <!-- ── Hardware stack ─────────────────────────────────────────────────── -->
+
+  <!--
+    Attaching a keyboard is how input gets injected, so one appearing while the
+    machine is under watch is worth a look even though the daemon says nothing
+    is wrong. The daemon sends WARNING severity in that case and INFO otherwise;
+    these two rules split on it rather than on the action.
+  -->
+  <rule id="100213" level="7">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^input_device_added$</field>
+    <field name="severity">^4$</field>
+    <description>behavioral-auth: an input device was attached while the machine was being watched</description>
+    <group>pci_dss_10.6.1,</group>
+  </rule>
+
+  <rule id="100214" level="3">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^input_device_added$</field>
+    <description>behavioral-auth: an input device was attached</description>
+  </rule>
+
+  <rule id="100215" level="5">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^input_device_removed$</field>
+    <description>behavioral-auth: an input device stopped being readable</description>
+  </rule>
+
+  <!--
+    Not an alarm, and it must not be alerted like one: it means the hardware is
+    not what the pattern was learned on, so nothing is being scored. The gap in
+    coverage is the finding, not the hardware change.
+  -->
+  <rule id="100216" level="7">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^stack_changed$</field>
+    <field name="detail.known">^false$</field>
+    <description>behavioral-auth: unenrolled hardware — scoring suspended, nobody is being checked</description>
+  </rule>
+
+  <rule id="100217" level="3">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^stack_changed$</field>
+    <description>behavioral-auth: enrolled hardware returned — scoring resumed</description>
   </rule>
 
   <!-- ── State machine ──────────────────────────────────────────────────── -->

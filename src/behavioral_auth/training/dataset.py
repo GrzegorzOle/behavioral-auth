@@ -10,6 +10,8 @@ import json
 
 import numpy as np
 
+from behavioral_auth.collector.stack import consolidate
+
 
 def load_sequences(conn, enrollment_id: str) -> np.ndarray:
     """Return this enrollment's sequences, oldest first.
@@ -24,6 +26,24 @@ def load_sequences(conn, enrollment_id: str) -> np.ndarray:
     if not rows:
         return np.empty((0, 0, 0), dtype=np.float32)
     return np.array([json.loads(r[0]) for r in rows], dtype=np.float32)
+
+
+def trained_stacks(conn, enrollment_id: str) -> list[str]:
+    """Every hardware stack the enrolment's sequences came from.
+
+    This is what a promoted pattern is allowed to be scored against. More than
+    one entry means the pattern is a mixture, and a mixture is more permissive
+    than a pattern learned on a single stack — the caller says so out loud.
+    """
+    rows = conn.execute(
+        'SELECT DISTINCT stack_fp FROM fused_sequences '
+        'WHERE enrollment_id = ? AND stack_fp IS NOT NULL ORDER BY stack_fp',
+        [enrollment_id],
+    ).fetchall()
+    # Consolidated: a keyboard-only key and a keyboard+mouse key from the same
+    # setup are one stack, not two. Counting the raw set would call every
+    # ordinary enrolment a mixture.
+    return consolidate(r[0] for r in rows)
 
 
 def count_sequences(conn, enrollment_id: str) -> int:

@@ -15,8 +15,9 @@ from loguru import logger
 
 _INSERT = (
     'INSERT INTO raw_events '
-    '(ts_ns, ts_utc, session_id, dev_path, dev_name, dev_type, ev_type, ev_code, ev_value) '
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    '(ts_ns, ts_utc, session_id, dev_path, dev_name, dev_id, dev_type, '
+    ' ev_type, ev_code, ev_value) '
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 )
 
 

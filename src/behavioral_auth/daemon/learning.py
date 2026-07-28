@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 from loguru import logger
 
+from behavioral_auth.collector.stack import describe
 from behavioral_auth.config import MODEL_COLUMNS, Settings
 from behavioral_auth.features.pipeline import to_model_input
 from behavioral_auth.features.scaler import apply_scaler, fit_scaler, save_scaler
@@ -179,7 +180,11 @@ class LearningController:
         _install(self.cfg.model.model_path, artifacts.onnx)
         save_scaler(artifacts.scaler, self.cfg.features.scaler_path)
 
-        meta = dict(artifacts.meta, enrollment_id=enrollment_id)
+        # The stacks this pattern is entitled to be scored against. MONITORING
+        # refuses to compare a live window against a stack the pattern never saw
+        # (collector/stack.py explains why that comparison is meaningless).
+        stacks = dataset.trained_stacks(conn, enrollment_id)
+        meta = dict(artifacts.meta, enrollment_id=enrollment_id, stacks=stacks)
         _install(self.cfg.model.metadata_path, json.dumps(meta, indent=2).encode())
 
         version = conn.execute(
@@ -211,3 +216,18 @@ class LearningController:
             + (f' It is, however, blind to: {", ".join(meta["blind_to"])} — those '
                f'differences it would not notice.' if meta.get('blind_to') else '')
         )
+        if len(stacks) > 1:
+            # Not a detail. A pattern spanning two hardware stacks has a wider
+            # spread, so its threshold sits higher, so it accepts more — the
+            # user has to be told at the moment it happens, not left to find out.
+            logger.warning(
+                f'This pattern was trained across {len(stacks)} hardware stacks '
+                f'({"; ".join(describe(s) for s in stacks)}). A pattern spanning more '
+                f'than one stack has a wider spread and therefore a higher threshold, '
+                f'which makes it MORE permissive than one learned on a single stack. '
+                f'For the strictest pattern, run "behavioral-auth reset" and enrol '
+                f'without changing hardware.'
+            )
+        elif stacks:
+            logger.info(f'Pattern is bound to one hardware stack: {describe(stacks[0])}. '
+                        f'Scoring is suspended on any other.')

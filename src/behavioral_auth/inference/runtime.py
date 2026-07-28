@@ -15,6 +15,7 @@ import numpy as np
 import onnxruntime as ort
 from loguru import logger
 
+from behavioral_auth.collector.stack import key_matches
 from behavioral_auth.config import Settings
 from behavioral_auth.features.pipeline import to_model_input
 from behavioral_auth.features.scaler import apply_scaler, load_scaler
@@ -49,6 +50,22 @@ class Pattern:
     @property
     def enrollment_id(self) -> str | None:
         return self.meta.get('enrollment_id')
+
+    @property
+    def stacks(self) -> list[str]:
+        """Hardware stacks this pattern was trained on.
+
+        Empty for a pattern promoted before stacks were recorded. Empty means
+        "unknown", and an unknown enrolment gates nothing — an upgrade must not
+        retroactively suspend a working pattern.
+        """
+        return list(self.meta.get('stacks') or [])
+
+    def accepts_stack(self, key: str | None) -> bool:
+        """May a sequence from stack *key* be scored against this pattern?"""
+        if not self.stacks or key is None:
+            return True
+        return key_matches(key, self.stacks)
 
     def errors(self, X: np.ndarray) -> np.ndarray:
         """Reconstruction error per sequence. *X* is (n, seq_len, 21) as stored."""

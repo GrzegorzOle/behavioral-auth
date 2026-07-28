@@ -40,6 +40,7 @@ from behavioral_auth.collector.keycodes import (
     REL_Y,
     vk_to_evdev,
 )
+from behavioral_auth.collector.stack import WINDOWS_DEVICE_ID
 
 _KBD_PATH, _MOUSE_PATH = '/windows/keyboard', '/windows/mouse'
 _BUTTONS = {'left': BTN_LEFT, 'right': BTN_RIGHT, 'middle': BTN_MIDDLE}
@@ -112,7 +113,12 @@ async def run_windows_hook(writer, session_id: str) -> None:
         ev_type, code, value = triple
         ts_ns = time.time_ns()
         ts_utc = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc)
-        row = (ts_ns, ts_utc, session_id, path, name, dev_type,
+        # One global hook, no per-device identity: pynput cannot say which
+        # keyboard produced a keystroke. Every event therefore claims the same
+        # stack, which makes the stack gate inert on Windows rather than wrong.
+        # Reaching real device identity there means RawInput (WM_INPUT), which
+        # pynput does not expose.
+        row = (ts_ns, ts_utc, session_id, path, name, WINDOWS_DEVICE_ID, dev_type,
                int(ev_type), int(code), int(value))
         # Cross the thread boundary: only the loop thread touches the Writer.
         loop.call_soon_threadsafe(writer.add, row)
