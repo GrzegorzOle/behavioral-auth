@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 — pattern age and drift in the report
 
 - **`behavioral-report` now shows how old the pattern is and whether scoring has
   drifted since** — the promotion date, and the median deviation week by week.

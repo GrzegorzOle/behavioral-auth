@@ -1,10 +1,10 @@
 # behavioral-auth — Usage Guide / Instrukcja użycia
 
-**Version / Wersja: v0.5.0** · Windows (installer) + Linux (AppImage)
+**Version / Wersja: v0.5.1** · Windows (installer) + Linux (AppImage)
 
 > 🇬🇧 **English below** · 🇵🇱 **Polski poniżej** (przewiń do sekcji [Polski](#polski))
 
-> ⚠️ **Status honesty / uczciwość statusu.** v0.5.0 was built and smoke-tested in CI,
+> ⚠️ **Status honesty / uczciwość statusu.** v0.5.1 was built and smoke-tested in CI,
 > but **not yet verified on a real Windows desktop session**. On Linux the AppImage runs;
 > the from-source install path is the tested one. Read [Known limitations](#known-limitations--what-to-verify)
 > before relying on it — especially the Windows *Session 0* caveat.
@@ -51,7 +51,7 @@ The same commands exist on both operating systems:
 | `behavioral-auth learn-more` | extend the existing pattern (explicit, not automatic) |
 | `behavioral-auth pause` / `resume` | pause / resume scoring |
 | `behavioral-auth db` | create / migrate the database |
-| `behavioral-report` | full report: threshold, learning cycles, scoring, alarms |
+| `behavioral-report` | full report: threshold, learning cycles, scoring, alarms, pattern age + drift |
 | `behavioral-face verify` / `info` | one-shot camera face check / face-model state |
 
 ---
@@ -60,7 +60,7 @@ The same commands exist on both operating systems:
 
 ### 1. Install
 
-Run **`behavioral-auth-setup-0.5.0.exe`** (from the GitHub release) as an administrator.
+Run **`behavioral-auth-setup-0.5.1.exe`** (from the GitHub release) as an administrator.
 The installer:
 
 - installs the suite to `C:\Program Files\behavioral-auth\`;
@@ -266,8 +266,19 @@ so a Wazuh decoder reading the body is unaffected; only that one lookup misleads
 - `status` — is it `LEARNING` and is the sequence counter climbing as you type? (If not on
   Windows, see the Session 0 note.)
 - `behavioral-report` — the pattern's anomaly threshold, its separation from synthetic
-  impostors, per-cycle pass rates, and any alarms.
+  impostors, per-cycle pass rates, any alarms, and **how old the pattern is with the
+  week-by-week drift** since it was promoted.
 - `behavioral-face verify` — a one-shot "is this me?" against the webcam.
+
+**After a long break (holiday, sick leave).** Nothing expires. The pattern is frozen and is
+still valid after two weeks away — there is no need to refresh it before you come back, and
+`reset` would only destroy a working pattern and cost you hours of re-enrolment. Behaviour
+does move over weeks, though, so if scoring feels twitchy on your return, read the **pattern
+age and drift** section of `behavioral-report`: a climbing weekly median is drift. Only if
+you are certain it is you at the keyboard, run `behavioral-auth learn-more` — it keeps the
+old pattern scoring until the refined one is promoted, so the machine is never unwatched.
+Note that a rising median is drift *or* another person, and this system cannot tell those
+apart.
 - **Fast smoke test:** set `general.mode: dev` in the config to shrink the gates so you can
   walk `LEARNING → MONITORING` in minutes. A pattern promoted under `dev` is a smoke test,
   **not** real protection — set it back to `prod` for real use.
@@ -276,7 +287,7 @@ so a Wazuh decoder reading the body is unaffected; only that one lookup misleads
 
 ## Known limitations & what to verify
 
-- **The whole Windows path is unverified on real hardware.** v0.5.0 was built and
+- **The whole Windows path is unverified on real hardware.** v0.5.1 was built and
   smoke-tested in CI (the bundle freezes, `behavioral-auth.exe` runs, the installer
   compiles). Nothing past that — the service under the SCM, live capture, an alarm reaching
   the Event Log, clean uninstall — has been run on a real Windows desktop yet.
@@ -346,7 +357,7 @@ Te same pięć komend działa na obu systemach:
 | `behavioral-auth learn-more` | doucz istniejący wzorzec (jawnie, nie automatycznie) |
 | `behavioral-auth pause` / `resume` | wstrzymaj / wznów punktację |
 | `behavioral-auth db` | utwórz / zmigruj bazę |
-| `behavioral-report` | pełny raport: próg, cykle nauki, punktacja, alarmy |
+| `behavioral-report` | pełny raport: próg, cykle nauki, punktacja, alarmy, wiek wzorca + dryf |
 | `behavioral-face verify` / `info` | jednorazowe sprawdzenie twarzy / stan modelu twarzy |
 
 ---
@@ -355,7 +366,7 @@ Te same pięć komend działa na obu systemach:
 
 ### 1. Instalacja
 
-Uruchom **`behavioral-auth-setup-0.5.0.exe`** (z release'u na GitHubie) jako administrator.
+Uruchom **`behavioral-auth-setup-0.5.1.exe`** (z release'u na GitHubie) jako administrator.
 Instalator:
 
 - instaluje aplikacje do `C:\Program Files\behavioral-auth\`;
@@ -562,8 +573,18 @@ dekoder Wazuha czytający ciało nic nie traci; myli wyłącznie to jedno wyszuk
 - `status` — czy jest `LEARNING` i czy licznik sekwencji rośnie, gdy piszesz? (Jeśli nie na
   Windows — patrz uwaga o Session 0.)
 - `behavioral-report` — próg anomalii wzorca, jego separacja od syntetycznych oszustów,
-  pass_rate na cykl i ewentualne alarmy.
+  pass_rate na cykl, ewentualne alarmy oraz **wiek wzorca i dryf tydzień po tygodniu**
+  od czasu promocji.
 - `behavioral-face verify` — jednorazowe „czy to ja?" z kamery.
+
+**Po dłuższej przerwie (urlop, zwolnienie).** Nic nie wygasa. Wzorzec jest zamrożony i po
+dwóch tygodniach nieobecności nadal obowiązuje — nie trzeba go odświeżać przed powrotem, a
+`reset` tylko zniszczyłby działający wzorzec i kosztował godziny nauki od nowa. Zachowanie
+jednak dryfuje przez tygodnie, więc jeśli po powrocie punktacja wydaje się nerwowa, zajrzyj
+do sekcji **wiek wzorca i dryf** w `behavioral-report`: rosnąca mediana tygodniowa to dryf.
+Dopiero gdy masz pewność, że to Ty przy klawiaturze, uruchom `behavioral-auth learn-more` —
+stary wzorzec punktuje dalej, aż nowy zostanie promowany, więc maszyna nigdy nie jest bez
+nadzoru. Pamiętaj: rosnąca mediana to dryf *albo* inna osoba, a system tego nie rozróżnia.
 - **Szybki test:** ustaw `general.mode: dev` w configu, by zmniejszyć bramki i przejść
   `LEARNING → MONITORING` w minuty. Wzorzec promowany w `dev` to test poprawności, **nie**
   realna ochrona — na koniec wróć do `prod`.
@@ -572,7 +593,7 @@ dekoder Wazuha czytający ciało nic nie traci; myli wyłącznie to jedno wyszuk
 
 ## Znane ograniczenia / co zweryfikować
 
-- **Cała ścieżka Windows jest niezweryfikowana na realnym sprzęcie.** v0.5.0 zbudowano i
+- **Cała ścieżka Windows jest niezweryfikowana na realnym sprzęcie.** v0.5.1 zbudowano i
   przetestowano dymnie w CI (bundle się zamraża, `behavioral-auth.exe` startuje, instalator
   się kompiluje). Nic dalej — usługa pod SCM, przechwytywanie na żywo, alarm w Dzienniku
   zdarzeń, czysta deinstalacja — nie było jeszcze uruchomione na prawdziwym desktopie.
