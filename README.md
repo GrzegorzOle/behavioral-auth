@@ -11,6 +11,12 @@ Everything runs on your machine: DuckDB on disk, ONNX on the CPU, and no network
 unless you switch on SIEM forwarding yourself — see [What leaves the
 machine](#what-leaves-the-machine).
 
+**Linux and Windows.** Every release ships a Windows installer and a Linux
+AppImage, both self-contained — see [Install](#install). Linux is the older and
+more thoroughly exercised of the two; the Windows build is newer, and
+[Platform support](#platform-support) sets out exactly which parts of it have
+been confirmed and which have not.
+
 ---
 
 ## What it actually does
@@ -140,8 +146,43 @@ other, and this daemon picks *not losing the event*.
 
 ## Install
 
-Requires Python 3.11+, and membership of the `input` group (to read the keyboard)
-and `video` group (for the camera).
+Three ways to get it. Every tagged release carries a ready-to-run build for both
+operating systems — nothing needs compiling.
+
+### Windows — installer
+
+Download **`behavioral-auth-setup-<version>.exe`** from the
+[releases](../../releases) and run it as administrator. It installs to
+`C:\Program Files\behavioral-auth\`, drops an editable config in
+`C:\ProgramData\behavioral-auth\`, and registers an auto-starting service.
+Uninstall through *Apps & features*. Full walkthrough in
+[docs/USAGE.md](docs/USAGE.md).
+
+Works today: the suite installs, the CLI and the report run, the service
+registers. **Two things to know before you rely on it.** Nobody has yet confirmed
+capture from a service in *Session 0* — if `status` sits in `LEARNING` with no
+sequences while you type, run `behavioral-authd.exe` in your own session instead,
+which is the documented fallback. And the hardware binding described above does
+not apply on Windows: `pynput` is one global hook and cannot tell keyboards
+apart. See [Platform support](#platform-support).
+
+### Linux — AppImage
+
+Download **`behavioral-auth-x86_64.AppImage`**, `chmod +x` it, and run it as a
+multi-call binary:
+
+```bash
+./behavioral-auth-x86_64.AppImage authd      # also: auth, report, face
+```
+
+You still need the `input` and `video` groups, a writable data directory, and
+FUSE 2 — the AppImage bundles the application, not the system setup. The
+prerequisites are three commands, listed in [docs/USAGE.md](docs/USAGE.md).
+
+### Linux — from source
+
+The tested path, and the one to use if you want the systemd unit and udev rules
+set up for you. Requires Python 3.11+.
 
 ```bash
 git clone <repo-url> behavioral-auth && cd behavioral-auth
@@ -305,15 +346,25 @@ Everything stays on the machine. Two things are worth knowing:
 **Linux — built, run and verified here.** Collection is `evdev`; the release ships
 a self-contained AppImage.
 
-**Windows — built and CI-tested, not verified on real hardware.** Since 0.4.0
-there is a `pynput` input backend producing the same event rows, an Event Log SIEM
-sink, a service, and an Inno Setup installer, all built by CI on every tagged
-release. What CI proves is that it builds, imports and runs `--help` on a Windows
-runner. What nobody has confirmed is the part that matters: the service running
-under the SCM, the input hook actually capturing, an alarm reaching the Event Log,
-and the installer registering and removing the service cleanly. Treat the Windows
-build as a beta until someone does that, and read `docs/USAGE.md`, which says the
-same thing.
+**Windows — shipped since 0.4.0, and a beta.** The suite is complete: a `pynput`
+input backend producing the same event rows as the evdev collector, an Event Log
+SIEM sink, a Windows service, and an installer, all built by CI on every tagged
+release and downloadable now.
+
+Rather than a vague status, here is the actual split:
+
+| Confirmed | Not yet confirmed |
+|---|---|
+| The bundle builds and freezes on a Windows runner | The service capturing input under the SCM |
+| `behavioral-auth.exe` and the report run | An alarm reaching the Event Log |
+| The installer compiles and produces a working `.exe` | The installer registering and removing the service on a live box |
+| The OS-agnostic logic (keycode map, event shaping) is unit-tested | Anything at all during a real desktop session |
+
+Everything in the left column runs in CI on every release. Nothing in the right
+column has been exercised, because there is no Windows machine on this project.
+That is why it is a beta rather than a release: not because parts are missing,
+but because the parts that exist have not been watched working. `docs/USAGE.md`
+says the same, and lists this as the first thing to check on hardware.
 
 Two Windows-specific limits worth knowing before you rely on it:
 
