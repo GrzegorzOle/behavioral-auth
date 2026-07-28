@@ -35,3 +35,38 @@ jobs:
 
       - name: Test
         run: make test
+
+  # A Windows runner in the matrix, per Stage 2. It does not re-run the whole
+  # suite (much of it assumes Linux paths / AF_UNIX); it installs the real
+  # Windows deps (pynput + pywin32 via the win32 markers) and runs the
+  # OS-agnostic parts the Windows port rests on — the VK->evdev map and the
+  # event shaper — plus an import smoke of the Windows-only modules. That proves
+  # those modules import and their logic holds on Windows, without dragging in
+  # the Linux-assuming tests.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      - name: Import-smoke the Windows-only modules
+        run: |
+          python -c "import behavioral_auth.collector.windows_source; import behavioral_auth.siem.sinks; print('windows modules import OK')"
+          python -m py_compile packaging/windows/service.py
+
+      - name: Test the OS-agnostic port logic
+        run: python -m pytest tests/test_keycodes.py tests/test_windows_source.py -q

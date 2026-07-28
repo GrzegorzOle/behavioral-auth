@@ -31,8 +31,9 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
-# ...but ours is a hand-written, checked-in build input, not a generated file.
+# ...but ours are hand-written, checked-in build inputs, not generated files.
 !packaging/behavioral-auth.spec
+!packaging/windows/behavioral-auth-windows.spec
 
 # Installer logs
 pip-log.txt

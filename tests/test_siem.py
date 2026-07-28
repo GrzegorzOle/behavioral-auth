@@ -171,6 +171,57 @@ def test_an_unreachable_sink_raises_rather_than_pretending(tmp_path):
             Event(category=Category.OPS, action='daemon_started'))
 
 
+# ── the Windows Event Log sink (pure parts; pywin32 is not on the dev box) ────
+
+def test_severity_maps_onto_event_log_types():
+    """Alarms are warnings, not errors — the daemon working is not a failure."""
+    from behavioral_auth.siem.sinks import (
+        EVENTLOG_INFORMATION_TYPE,
+        EVENTLOG_WARNING_TYPE,
+        event_type_for,
+    )
+
+    assert event_type_for(Severity.ALERT) == EVENTLOG_WARNING_TYPE
+    assert event_type_for(Severity.WARNING) == EVENTLOG_WARNING_TYPE
+    assert event_type_for(Severity.NOTICE) == EVENTLOG_INFORMATION_TYPE
+    assert event_type_for(Severity.INFO) == EVENTLOG_INFORMATION_TYPE
+
+
+def test_build_sink_selects_the_event_log_sink(cfg):
+    from behavioral_auth.siem.sinks import EventLogSink, build_sink
+
+    cfg.siem.sink = 'eventlog'
+    cfg.siem.eventlog_source = 'behavioral-auth'
+    sink = build_sink(cfg.siem)
+    assert isinstance(sink, EventLogSink)
+    assert sink.source == 'behavioral-auth'
+    assert sink.log_type == 'Application'
+
+
+def test_event_log_send_admits_failure_when_pywin32_is_absent(monkeypatch):
+    """Without pywin32 the sink must raise, so the spool holds the event back
+    rather than pretending it was delivered. Forced here (setting the module to
+    None makes `import` raise ImportError) so the assertion holds on Windows CI
+    too, where pywin32 is actually installed."""
+    import sys
+
+    from behavioral_auth.siem.sinks import EventLogSink
+
+    monkeypatch.setitem(sys.modules, 'win32evtlogutil', None)
+    monkeypatch.setitem(sys.modules, 'pywintypes', None)
+    with pytest.raises(SinkError):
+        EventLogSink('behavioral-auth').send(
+            Event(category=Category.OPS, action='daemon_started'))
+
+
+def test_eventlog_is_an_accepted_sink_and_junk_is_not():
+    from behavioral_auth.config import SiemCfg
+
+    assert SiemCfg(sink='eventlog').sink == 'eventlog'
+    with pytest.raises(ValueError, match='siem.sink'):
+        SiemCfg(sink='nonsense')
+
+
 # ── what must never leave the machine ────────────────────────────────────────
 
 def test_a_state_transition_forwards_a_closed_list_of_fields(siem_cfg):

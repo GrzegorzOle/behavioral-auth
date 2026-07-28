@@ -1,7 +1,8 @@
 name: release
 
-# Build the self-contained Linux AppImage. Runs on a version tag (attaches the
-# AppImage to the GitHub release) and on manual dispatch (artifact only).
+# Build the self-contained artifacts: the Linux AppImage and the Windows
+# installer. Runs on a version tag (attaches both to the GitHub release) and on
+# manual dispatch (artifacts only).
 on:
   push:
     tags: ['v*']
@@ -76,4 +77,80 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/behavioral-auth-x86_64.AppImage
+          # The AppImage plus the bilingual usage guide (docs/USAGE.md), so the
+          # release carries the how-to-install-and-run instructions alongside the
+          # binaries. Attached from this job only — the windows job adds the
+          # installer separately.
+          files: |
+            dist/behavioral-auth-x86_64.AppImage
+            docs/USAGE.md
+
+  # The Windows one-folder bundle wrapped into an Inno Setup installer. Mirrors
+  # the AppImage job on a windows runner. Not verified against a real desktop
+  # session — the smoke test only exercises the frozen import graph via --help.
+  windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      # No make on the Windows runner; install the same deps directly. The win32
+      # markers in requirements.txt pull pynput + pywin32 here.
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      # Version from the tag (v0.3.0 -> 0.3.0); a dispatch build has no tag.
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          ref="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Inno Setup provides iscc; the runner does not ship it.
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build bundle + installer
+        run: powershell -ExecutionPolicy Bypass -File packaging\windows\build-windows.ps1 -Version ${{ steps.ver.outputs.version }}
+
+      # --help exits in argparse before any config/DB is touched, yet still walks
+      # the whole frozen import graph (torch, onnx, cv2, duckdb, pynput, pywin32).
+      # Check the exit code explicitly — a native crash does not fail a pwsh step
+      # on its own — and the installer independently.
+      - name: Smoke-test the bundle
+        run: |
+          dist\behavioral-auth\behavioral-auth.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "behavioral-auth.exe --help exited $LASTEXITCODE" }
+          $setup = "dist\behavioral-auth-setup-${{ steps.ver.outputs.version }}.exe"
+          if (-not (Test-Path $setup)) { throw "installer missing: $setup" }
+          Write-Host "OK: bundle runs and installer present"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: behavioral-auth-setup
+          path: dist/behavioral-auth-setup-*.exe
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/behavioral-auth-setup-*.exe

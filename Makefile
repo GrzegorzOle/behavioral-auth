@@ -4,7 +4,7 @@ PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
 export PYTHONPATH := src
 
-.PHONY: venv install run status report test lint demo bundle appimage clean
+.PHONY: venv install run status report test lint demo demo-impostor bundle appimage clean
 
 venv:
 	$(PYTHON) -m venv $(VENV)
@@ -27,10 +27,20 @@ status:
 report:
 	$(VENV)/bin/behavioral-report
 
-# Walk the whole LEARNING -> MONITORING -> ALARM path in a couple of minutes,
-# without typing for hours or recruiting someone to impersonate you.
+# Walk LEARNING -> MONITORING in a couple of minutes, without typing for hours.
+# --mode dev is what makes it a demo: it merges config.dev.yaml (shrunk gates)
+# and lifts the prod refusal on synthetic input.
+#
+# It stops at MONITORING, because the synthetic user never stops being the user.
+# For the ALARM leg, run `make demo-impostor` from another terminal once the log
+# says MONITORING — that swaps the person at the keyboard mid-run.
+#
+# NOTE: this writes to the real data_dir from config.yaml, same as `make run`.
 demo:
-	$(VENV)/bin/behavioral-authd --synthetic-input user --synthetic-speed 40
+	$(VENV)/bin/behavioral-authd --mode dev --synthetic-input user --synthetic-speed 40
+
+demo-impostor:
+	$(VENV)/bin/behavioral-auth set-profile impostor
 
 test:
 	$(PY) -m pytest tests -q

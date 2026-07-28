@@ -12,15 +12,49 @@ against the database directly.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
+import sys
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
+
+# An exclusive, non-blocking advisory lock on the pidfile, held for the daemon's
+# life and probed by the CLI for liveness. fcntl is Unix-only; Windows has no
+# evdev but it has msvcrt byte-range locking, which gives the same "another
+# process holds it -> I can't take it" signal on a 1-byte region at offset 0.
+if sys.platform == 'win32':
+    import msvcrt
+
+    def _lock_nb(fd: int) -> bool:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fd: int) -> None:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+else:
+    import fcntl
+
+    def _lock_nb(fd: int) -> bool:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 @dataclass
@@ -41,9 +75,7 @@ class PidFile:
 
     def acquire(self) -> bool:
         fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        if not _lock_nb(fd):
             os.close(fd)
             return False
         os.ftruncate(fd, 0)
@@ -54,7 +86,7 @@ class PidFile:
 
     def release(self) -> None:
         if self._fd is not None:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            _unlock(self._fd)
             os.close(self._fd)
             self._fd = None
         self.path.unlink(missing_ok=True)
@@ -67,11 +99,9 @@ def daemon_running(run_dir: str) -> bool:
         return False
     fd = os.open(path, os.O_RDWR)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        return True          # someone else holds it — the daemon is alive
-    else:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        if not _lock_nb(fd):
+            return True       # someone else holds it — the daemon is alive
+        _unlock(fd)
         return False
     finally:
         os.close(fd)

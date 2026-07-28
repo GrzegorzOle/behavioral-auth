@@ -1,0 +1,131 @@
+# behavioural-auth — Windows defaults.
+#
+# The Linux config (config/config.yaml) writes under /var/lib and logs to
+# /dev/log; neither exists on Windows. This is the same config with the paths
+# repointed at C:\ProgramData\behavioral-auth (writable by the LocalSystem
+# account the service runs as), the SIEM sink set to the Windows Event Log, and a
+# Windows desktop notification. Everything else is identical to the Linux config.
+#
+# Forward slashes are used on purpose — Windows accepts them and YAML then needs
+# no backslash escaping. The installer drops an editable copy here and points
+# BEHAVIORAL_AUTH_CONFIG at it; edit that file, not the read-only one inside the
+# install folder.
+general:
+  mode: prod                # prod | dev  (dev shrinks every gate — testing only)
+  data_dir: "C:/ProgramData/behavioral-auth"
+  log_level: "INFO"
+  log_file: "C:/ProgramData/behavioral-auth/behavioral-auth.log"
+
+daemon:
+  tick_sec: 5
+  run_dir: "C:/ProgramData/behavioral-auth/run"
+  console: "never"          # a service has no console; the CLI forces its own
+
+collector:
+  devices: []               # ignored on Windows — one global hook, not /dev/input
+  batch_size: 200
+  flush_interval_sec: 1.0
+
+storage:
+  db_path: "C:/ProgramData/behavioral-auth/behavior.duckdb"
+
+features:
+  window_sec: 20
+  stride_sec: 5
+  min_keyboard_events: 12
+  min_mouse_events: 10
+  scaler_path: "C:/ProgramData/behavioral-auth/scaler.json"
+  dedup_gap_sec: 2
+  max_seq_gap_sec: 40
+  std_floor: 0.001
+
+model:
+  seq_len: 12
+  hidden_dim: 24
+  num_layers: 3
+  kernel_size: 3
+  dropout: 0.10
+  batch_size: 128
+  epochs: 30
+  lr: 0.001
+  val_split: 0.2
+  device: "cpu"
+  model_path: "C:/ProgramData/behavioral-auth/model.onnx"
+  metadata_path: "C:/ProgramData/behavioral-auth/model_meta.json"
+
+learning:
+  cycle_min_sec: 600
+  cycle_min_new_sequences: 200
+  holdout_frac: 0.20
+  min_sequences: 1200
+  min_active_minutes: 90
+  min_distinct_hours: 3
+  stable_consecutive_cycles: 3
+  stability:
+    pass_rate_min: 0.90
+    error_ratio_max: 1.6
+    threshold_drift_max: 0.25
+    false_alarm_max: 0.02
+    sanity_detection_min: 0.90
+
+alarm:
+  enter_consecutive: 16
+  enter_min_span_sec: 120
+  clear_consecutive: 16
+  clear_min_span_sec: 120
+  clear_hysteresis: 0.20
+  # Windows has no notify-send. A hidden PowerShell pops a message box (its own
+  # process, so it never blocks the daemon). Change freely — it is only a default.
+  notify_cmd: "powershell -NoProfile -WindowStyle Hidden -Command \"Add-Type -AssemblyName PresentationFramework;[System.Windows.MessageBox]::Show('Osoba przy klawiaturze nie odpowiada wzorcowi','Behavioral Auth')\""
+  notify_cooldown_sec: 300
+  heartbeat_sec: 300
+
+face:
+  enabled: true
+  backend: "opencv"
+  camera_index: 0
+  model_path: "C:/ProgramData/behavioral-auth/face_model.yml"
+  meta_path: "C:/ProgramData/behavioral-auth/face_meta.json"
+  samples_dir: "C:/ProgramData/behavioral-auth/face_samples"
+  confidence_threshold: "auto"
+  required_for_promotion: true
+  min_samples: 60
+  sample_interval_sec: 20
+  retrain_every_n_samples: 30
+  check_interval_sec: 30
+  stranger_consecutive: 3
+  stranger_stale_sec: 300
+  keep_samples: true
+  min_face_width: 100
+  min_sharpness: 60.0
+  min_brightness: 40.0
+  max_brightness: 220.0
+  self_confidence_max: 90.0
+
+# Forwarding to a SIEM. OFF unless you turn it on — while `enabled` is false no
+# socket or Event Log source is opened. See config/config.yaml for the full note
+# on what does and does not leave the machine; it holds here too.
+siem:
+  enabled: false
+  sink: "eventlog"              # syslog | eventlog | wazuh  (eventlog = Windows)
+  ident: "behavioral-auth"
+  facility: 10
+
+  # sink: eventlog — write to this box's Windows Event Log (Application log). A
+  # Wazuh agent's windows-eventchannel collector forwards it on, exactly as a
+  # wazuh-agent tails syslog on Linux — no network code of ours. The source is
+  # registered on first use (needs admin once; the installer does it).
+  eventlog_source: "behavioral-auth"
+  eventlog_log: "Application"
+
+  # sink: wazuh — straight to the manager's syslog listener, for a box with no
+  # agent. UDP is unacknowledged; use tcp if the audit trail matters.
+  host: ""
+  port: 514
+  protocol: "tcp"
+
+  store_alarms_locally: true
+
+  spool_path: "C:/ProgramData/behavioral-auth/siem-spool.jsonl"
+  spool_max_events: 10000
+  flush_interval_sec: 10

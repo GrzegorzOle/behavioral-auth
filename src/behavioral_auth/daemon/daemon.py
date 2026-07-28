@@ -16,6 +16,7 @@ import json
 import os
 import signal
 import socket
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -145,6 +146,15 @@ class Daemon:
             self.tasks.append(asyncio.create_task(self.source.run()))
             return
 
+        if sys.platform == 'win32':
+            # Windows has no evdev; a global pynput hook produces the same event
+            # rows (collector/windows_source.py). Imported here so pynput is only
+            # touched on Windows and Linux imports stay evdev-only.
+            from behavioral_auth.collector.windows_source import run_windows_hook
+            self.tasks.append(asyncio.create_task(
+                run_windows_hook(self.writer, self.session_id)))
+            return
+
         devices = detect_devices(self.cfg.collector.devices)
         if not devices:
             raise SystemExit(
@@ -155,13 +165,28 @@ class Daemon:
                 run_evdev(path, self.writer, self.session_id)))
 
     def _install_signals(self) -> None:
-        loop = asyncio.get_running_loop()
+        self._loop = asyncio.get_running_loop()
+        if sys.platform == 'win32':
+            # The Proactor loop has no add_signal_handler; a console Ctrl+C still
+            # surfaces as KeyboardInterrupt in main(), and the Windows service
+            # stops us via request_stop() instead.
+            return
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, self._request_stop)
+            self._loop.add_signal_handler(sig, self._request_stop)
 
     def _request_stop(self) -> None:
         logger.info('Shutting down…')
         self._stopping = True
+
+    def request_stop(self) -> None:
+        """Ask the daemon to shut down from another thread (the Windows service's
+        SvcStop runs on an SCM thread, not the loop). Safe to call before the
+        loop exists — the supervisor reads the flag either way."""
+        loop = getattr(self, '_loop', None)
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self._request_stop)
+        else:
+            self._stopping = True
 
     async def _shutdown(self) -> None:
         for t in self.tasks:
