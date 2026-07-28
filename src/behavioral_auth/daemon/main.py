@@ -39,6 +39,10 @@ def main() -> None:
                     'Never locks the session — it only warns.',
     )
     p.add_argument('--config', metavar='PATH', help='config file (default: search)')
+    p.add_argument('--mode', choices=['dev', 'prod'],
+                   help='override general.mode. dev merges config.dev.yaml, which '
+                        'shrinks every promotion gate — a pattern promoted that way '
+                        'is a smoke test, not something to rely on')
     p.add_argument('--console', dest='console', action='store_const', const='always',
                    help='force the live status block on')
     p.add_argument('--no-console', dest='console', action='store_const', const='never',
@@ -52,7 +56,7 @@ def main() -> None:
 
     if args.config:
         os.environ['BEHAVIORAL_AUTH_CONFIG'] = args.config
-    cfg = load_settings()
+    cfg = load_settings(mode=args.mode)
     if args.console:
         cfg.daemon.console = args.console
 

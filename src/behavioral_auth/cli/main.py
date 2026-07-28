@@ -122,6 +122,15 @@ def cmd_resume(cfg, args) -> int:
     return _dispatch(cfg, 'resume', {})
 
 
+def cmd_set_profile(cfg, args) -> int:
+    """Swap the synthetic person mid-run — the only way to reach ALARM in a demo.
+
+    A no-op against a daemon reading real devices: the command needs a
+    SyntheticSource, so the daemon answers 'nieznana komenda' without one.
+    """
+    return _dispatch(cfg, 'set-profile', {'profile': args.profile})
+
+
 def cmd_db(cfg, args) -> int:
     if control.daemon_running(cfg.daemon.run_dir):
         print('Demon działa i trzyma bazę — zatrzymaj go, żeby migrować ręcznie.')
@@ -153,6 +162,11 @@ def main() -> None:
     sub.add_parser('pause', help='wstrzymaj punktację').set_defaults(fn=cmd_pause)
     sub.add_parser('resume', help='wznów punktację').set_defaults(fn=cmd_resume)
     sub.add_parser('db', help='utwórz/zmigruj bazę').set_defaults(fn=cmd_db)
+
+    sp = sub.add_parser('set-profile',
+                        help='podmień profil syntetyczny (tylko --synthetic-input)')
+    sp.add_argument('profile', choices=['user', 'impostor'])
+    sp.set_defaults(fn=cmd_set_profile)
 
     args = p.parse_args()
     if args.config:

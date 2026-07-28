@@ -166,21 +166,26 @@ journalctl --user -fu behavioral-authd
 
 Learning normally takes hours of real use, and testing the alarm would take a
 second person. So there is a synthetic input source that runs on an accelerated
-clock (refused in `prod` mode):
+clock (refused in `prod` mode — hence `--mode dev`, which also merges
+`config.dev.yaml` and shrinks every promotion gate):
 
 ```bash
-make demo        # behavioral-authd --synthetic-input user --synthetic-speed 40
+make demo        # behavioral-authd --mode dev --synthetic-input user --synthetic-speed 40
 ```
 
-Watch it learn, converge, promote, and switch to MONITORING. Then, in another
-terminal, put a different person at the keyboard:
+Watch it learn, converge, promote, and switch to MONITORING — about a minute.
+Then, in another terminal, put a different person at the keyboard:
 
 ```bash
-python -c "from behavioral_auth.daemon import control; \
-           control.send('/var/lib/behavioral-auth/run','set-profile',{'profile':'impostor'})"
+make demo-impostor        # behavioral-auth set-profile impostor
 ```
 
 The deviation climbs past the threshold, and once it *stays* there, ALARM.
+
+A pattern promoted under `--mode dev` is a smoke test, not a pattern to rely on;
+`behavioral-auth reset` clears it. The demo writes to the same `data_dir` as a
+real run, so point `BEHAVIORAL_AUTH_CONFIG` at a scratch config if you would
+rather not touch it.
 
 ---
 
@@ -193,6 +198,7 @@ The deviation climbs past the threshold, and once it *stays* there, ALARM.
 | `behavioral-auth reset` | **Somebody else will use this machine.** Destroys the pattern and all face crops, starts learning from zero. |
 | `behavioral-auth learn-more` | Refine the existing pattern with more data. Explicit, never automatic. |
 | `behavioral-auth pause` / `resume` | Stop/start scoring (collection continues). |
+| `behavioral-auth set-profile user\|impostor` | Swap the synthetic person mid-run. Only does anything against a daemon started with `--synthetic-input`. |
 | `behavioral-report` | Learning cycles, scores, alarms. No FAR/FRR — see above. |
 | `behavioral-face info` / `verify` | Inspect and test the face pattern the daemon built. |
 

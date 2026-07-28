@@ -300,15 +300,24 @@ def config_path() -> str:
     raise FileNotFoundError(f'No config file found. Tried: {candidates}')
 
 
-def load_settings(path: str | None = None) -> Settings:
+def load_settings(path: str | None = None, mode: str | None = None) -> Settings:
     """Load settings from *path*, or from the first existing search location.
 
     A config.<mode>.yaml overlay next to the base file is deep-merged on top,
     so config.dev.yaml can shrink the learning gates for a fast test run.
+
+    *mode* overrides general.mode from the file. It is applied *before* the
+    overlay is resolved, so `--mode dev` actually picks up config.dev.yaml
+    instead of merely relabelling a run that still carries the prod gates.
     """
     if path is None:
         path = config_path()
     data = yaml.safe_load(Path(path).read_text()) or {}
+
+    if mode is not None:
+        general = data.get('general') or {}
+        general['mode'] = mode
+        data['general'] = general
 
     mode = data.get('general', {}).get('mode', 'dev')
     overlay = Path(path).parent / f'config.{mode}.yaml'
