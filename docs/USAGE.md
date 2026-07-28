@@ -204,8 +204,14 @@ Off by default. Set `siem.enabled: true` with `siem.sink: syslog` (writes to `/d
 Wazuh agent on the box picks it up) or `siem.sink: wazuh` (straight to the manager). Verify:
 
 ```bash
-journalctl -t behavioral-auth -f        # events land in the journal with sink: syslog
+journalctl -f SYSLOG_FACILITY=10        # events land in the journal with sink: syslog
 ```
+
+Do not check with `journalctl -t behavioral-auth`: it finds nothing even when forwarding
+works. Events are framed as RFC 5424 while journald's syslog parser expects RFC 3164, so
+`siem.ident` never becomes the journal's `SYSLOG_IDENTIFIER` — it survives only inside the
+message text. The facility (`10`, authpriv), the priority and the JSON body are all intact,
+so a Wazuh decoder reading the body is unaffected; only that one lookup misleads.
 
 ### 6. Troubleshooting (Linux)
 
@@ -472,8 +478,14 @@ Domyślnie wyłączone. Ustaw `siem.enabled: true` z `siem.sink: syslog` (pisze 
 agent Wazuh na maszynie to podbiera) albo `siem.sink: wazuh` (prosto do managera). Sprawdź:
 
 ```bash
-journalctl -t behavioral-auth -f        # zdarzenia trafiają do journala przy sink: syslog
+journalctl -f SYSLOG_FACILITY=10        # zdarzenia trafiają do journala przy sink: syslog
 ```
+
+Nie sprawdzaj przez `journalctl -t behavioral-auth`: nie znajdzie nic nawet wtedy, gdy
+forwarding działa. Ramkujemy zdarzenia w RFC 5424, a parser syslogu w journaldzie oczekuje
+RFC 3164, więc `siem.ident` nigdy nie trafia do `SYSLOG_IDENTIFIER` — przeżywa tylko w
+treści wiadomości. Facility (`10`, authpriv), priorytet i ciało JSON są nienaruszone, więc
+dekoder Wazuha czytający ciało nic nie traci; myli wyłącznie to jedno wyszukanie.
 
 ### 6. Rozwiązywanie problemów (Linux)
 
