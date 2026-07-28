@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **`behavioral-report` now shows how old the pattern is and whether scoring has
+  drifted since** — the promotion date, and the median deviation week by week.
+  Behaviour moves over weeks; a pattern is a photograph of how you typed during
+  enrolment, not a law. Previously the only way to notice drift was to be
+  alarmed by it.
+- The report **refuses to interpret the trend**. A rising median is you drifting
+  or somebody else at the keyboard, and with no impostor data this system cannot
+  tell those apart — it prints the number, says exactly that, and points at
+  `learn-more` rather than `reset` for the case where you are sure it is you. A
+  week with fewer than 20 scores is not treated as a data point at all.
+
 ## 0.5.0 — the pattern is bound to the hardware it was learned on
 
 ### The hardware stack

@@ -52,6 +52,13 @@ The pattern only ever changes when **you** say so — `behavioral-auth reset`
 (someone else is going to use this machine) or `behavioral-auth learn-more`
 (refine what you have). There is no automatic adaptation anywhere in the code.
 
+Nothing expires either: a pattern is still valid after a two-week holiday, and
+you do not need to refresh it before coming back. But behaviour does move over
+weeks, so `behavioral-report` shows the pattern's age and the median deviation
+week by week. If the trend is climbing, that is you drifting **or** somebody else
+at the keyboard — this system cannot tell those apart and does not pretend to.
+The report prints the number and leaves the judgement to you.
+
 ### The pattern belongs to one set of hardware
 
 You do not type the same way on a laptop keyboard as on an external one through a
@@ -260,7 +267,7 @@ rather not touch it.
 | `behavioral-auth learn-more` | Refine the existing pattern with more data. Explicit, never automatic. |
 | `behavioral-auth pause` / `resume` | Stop/start scoring (collection continues). |
 | `behavioral-auth set-profile user\|impostor` | Swap the synthetic person mid-run. Only does anything against a daemon started with `--synthetic-input`. |
-| `behavioral-report` | Learning cycles, scores, alarms. No FAR/FRR — see above. |
+| `behavioral-report` | Learning cycles, scores, alarms, pattern age and week-by-week drift. No FAR/FRR — see above. |
 | `behavioral-face info` / `verify` | Inspect and test the face pattern the daemon built. |
 
 The daemon holds DuckDB's single write lock for its whole life, so the CLI talks
