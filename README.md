@@ -35,11 +35,30 @@ first start, empty machine
    ┌─────────┐   logs, prints, notifies. Locks nothing.
    │  ALARM  │   Clears itself when normal behaviour returns.
    └─────────┘
+
+   ┌─────────────┐   you docked, or swapped keyboards. The pattern was learned
+   │ ZAWIESZONY  │   on other hardware, so there is nothing meaningful to
+   │  SUSPENDED  │   compare against — it stops scoring and says so. Never an
+   └─────────────┘   alarm. Collection continues.
 ```
 
 The pattern only ever changes when **you** say so — `behavioral-auth reset`
 (someone else is going to use this machine) or `behavioral-auth learn-more`
 (refine what you have). There is no automatic adaptation anywhere in the code.
+
+### The pattern belongs to one set of hardware
+
+You do not type the same way on a laptop keyboard as on an external one through a
+dock, and you do not move a trackpad like a mouse. So a pattern is bound to the
+hardware it was learned on, and behaviour from other hardware is **not scored at
+all** rather than scored badly.
+
+This is not politeness about false alarms. A pattern trained across a *mixture* of
+two setups has a wider spread, so its threshold sits higher, so it accepts more —
+mixing hardware during enrolment makes the system **less** able to notice a
+stranger, not just more likely to nag you. If you enrol docked and then undock,
+the daemon suspends scoring and tells you; `learn-more` will fold the second setup
+in, and will warn you at that moment about exactly this cost.
 
 ---
 
@@ -91,6 +110,7 @@ manager). If you do, this is the complete list of what is sent:
 | State transitions: `LEARNING → MONITORING → ALARM`, and why | Mouse coordinates or movement |
 | Operations: daemon start/stop, `pause`, `learn-more`, and `reset` | Photographs of your face, or any frame from the camera |
 | Whether the camera matched, as the word `match`, `stranger` or `unknown` | Feature vectors, sequences, model weights, the scaler, the threshold |
+| Input devices attached or lost, and changes of hardware stack, as a **hashed** fingerprint | Device names, vendor/product ids — anything amounting to a hardware inventory |
 | The hostname, and the enrolment/session UUIDs | Per-sequence scores — at a 5 s stride that is hundreds an hour |
 
 The event carries a **verdict and a number, never the behaviour they were computed
@@ -245,6 +265,24 @@ face:
 There is no `lock_cmd` and no `enforce` mode. They were removed from the code,
 not just disabled in the config.
 
+### Sending events to a Wazuh manager
+
+`packaging/wazuh/` holds a decoder and a ruleset. They install on the **manager**,
+not on this machine — decoding is manager-side. Without them a Wazuh manager
+receives the events and matches no rule, which means it drops them silently: no
+alert, and no archive unless `logall_json` is on.
+
+If a Wazuh agent on this box already collects journald — the Fedora default — the
+events reach the manager with no agent-side change at all. Verify with
+`journalctl -f SYSLOG_FACILITY=10`; **not** with `journalctl -t behavioral-auth`,
+which finds nothing even when forwarding works, because journald parses RFC 3164
+and these events are framed as RFC 5424.
+
+The decoder and rules have been checked for well-formedness and against captured
+event frames, but have **not** been run on a real Wazuh manager. `wazuh-logtest`
+is the one-minute way to confirm them on yours; `packaging/wazuh/README.md` has
+the procedure.
+
 ---
 
 ## Privacy
@@ -264,11 +302,29 @@ Everything stays on the machine. Two things are worth knowing:
 
 ## Platform support
 
-**Linux only.** Collection is built on `evdev`, and without collection there is
-nothing for the rest of the system to do — the face model can only be enrolled by
-the daemon while it learns, so a face-only Windows install would have no pattern
-to verify against. The previous partial Windows support was removed rather than
-left in place to mislead. Use Linux, or WSL2 with passthrough to `/dev/input`.
+**Linux — built, run and verified here.** Collection is `evdev`; the release ships
+a self-contained AppImage.
+
+**Windows — built and CI-tested, not verified on real hardware.** Since 0.4.0
+there is a `pynput` input backend producing the same event rows, an Event Log SIEM
+sink, a service, and an Inno Setup installer, all built by CI on every tagged
+release. What CI proves is that it builds, imports and runs `--help` on a Windows
+runner. What nobody has confirmed is the part that matters: the service running
+under the SCM, the input hook actually capturing, an alarm reaching the Event Log,
+and the installer registering and removing the service cleanly. Treat the Windows
+build as a beta until someone does that, and read `docs/USAGE.md`, which says the
+same thing.
+
+Two Windows-specific limits worth knowing before you rely on it:
+
+- **No per-device identity.** `pynput` is a single global hook and cannot say
+  which keyboard produced a keystroke, so the hardware-stack binding described
+  above does not apply there — it is inert, not enforced.
+- **A service in Session 0** may not see interactive desktop input at all; the
+  fallback is running `behavioral-auth.exe` in the user session.
+
+WSL2 with passthrough to `/dev/input` is a third option, and is Linux as far as
+the daemon is concerned.
 
 ---
 
@@ -277,14 +333,20 @@ left in place to mislead. Use Linux, or WSL2 with passthrough to `/dev/input`.
 ```
 src/behavioral_auth/
 ├── daemon/      state machine, learning controller, alarm logic, control channel
-├── collector/   evdev capture + a synthetic source for testing
+├── collector/   evdev + pynput capture, hardware-stack identity, synthetic source
 ├── features/    incremental window and sequence extraction
 ├── models/      Conv1D autoencoder with a bottleneck
 ├── training/    dataset scoping, fitting, promotion gates, threshold calibration
 ├── inference/   ONNX scoring, behavioural/face channel rules
 ├── face/        silent LBPH enrolment, quality gates, calibration
 ├── reporting/   what was observed
+├── siem/        optional forwarding: syslog, Windows Event Log, Wazuh
 └── db/          DuckDB access + schema migrations
+
+packaging/
+├── wazuh/       decoder + ruleset for a Wazuh manager (install there, not here)
+├── windows/     PyInstaller spec, service, Inno Setup installer
+└──              AppImage and one-folder Linux bundle
 ```
 
 ## License

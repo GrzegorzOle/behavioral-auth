@@ -4,7 +4,7 @@
 # script. Run on Windows from the repo root, in a venv that installed
 # requirements.txt (pulls pynput + pywin32) and pyinstaller:
 #
-#     .\packaging\windows\build-windows.ps1 -Version 0.4.0
+#     .\packaging\windows\build-windows.ps1 -Version 0.5.0
 #
 # Produces:
 #   dist\behavioral-auth\                      the one-folder bundle (5 .exes + _internal\)
@@ -15,7 +15,7 @@
 # Not runtime-verified on a real Windows box yet -- see Planned work, Stage 2.
 
 param(
-    [string]$Version = "0.4.0",
+    [string]$Version = "0.5.0",
     [string]$PyInstaller = "pyinstaller",
     # Inno Setup's compiler. Skipped (bundle only) if not found.
     [string]$Iscc = "iscc"

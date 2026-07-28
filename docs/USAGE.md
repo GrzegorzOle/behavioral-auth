@@ -1,10 +1,10 @@
 # behavioral-auth — Usage Guide / Instrukcja użycia
 
-**Version / Wersja: v0.4.0** · Windows (installer) + Linux (AppImage)
+**Version / Wersja: v0.5.0** · Windows (installer) + Linux (AppImage)
 
 > 🇬🇧 **English below** · 🇵🇱 **Polski poniżej** (przewiń do sekcji [Polski](#polski))
 
-> ⚠️ **Status honesty / uczciwość statusu.** v0.4.0 was built and smoke-tested in CI,
+> ⚠️ **Status honesty / uczciwość statusu.** v0.5.0 was built and smoke-tested in CI,
 > but **not yet verified on a real Windows desktop session**. On Linux the AppImage runs;
 > the from-source install path is the tested one. Read [Known limitations](#known-limitations--what-to-verify)
 > before relying on it — especially the Windows *Session 0* caveat.
@@ -28,7 +28,20 @@ unless you explicitly enable SIEM forwarding.
 behaviour, freezes the pattern (promotion), then scores live behaviour against it. A
 sustained mismatch raises an alarm; a return to normal clears it.
 
-The same five commands exist on both operating systems:
+**The pattern belongs to one set of hardware (Linux).** You do not type the same way on a
+laptop keyboard as on an external one through a dock, so a pattern learned docked is not
+used to judge you undocked. When the hardware is not what the pattern was learned on,
+`status` shows **`SUSPENDED`** and nothing is scored — deliberately *not* an alarm, because
+"you undocked" is not something you can act on. Collection continues, and
+`behavioral-auth learn-more` will fold the new setup into the pattern.
+
+Be aware of what that costs: a pattern covering two setups has a wider spread and a higher
+threshold, so it accepts **more** behaviour than one learned on a single setup. `learn-more`
+warns about this at the moment it happens, and `behavioral-report` lists the setups a
+pattern covers. On Windows this binding does not apply at all — see
+[Known limitations](#known-limitations--what-to-verify).
+
+The same commands exist on both operating systems:
 
 | Command | What it does |
 |---|---|
@@ -47,7 +60,7 @@ The same five commands exist on both operating systems:
 
 ### 1. Install
 
-Run **`behavioral-auth-setup-0.4.0.exe`** (from the GitHub release) as an administrator.
+Run **`behavioral-auth-setup-0.5.0.exe`** (from the GitHub release) as an administrator.
 The installer:
 
 - installs the suite to `C:\Program Files\behavioral-auth\`;
@@ -221,6 +234,7 @@ so a Wazuh decoder reading the body is unaffected; only that one lookup misleads
 | AppImage won't start / FUSE error | `dnf install fuse-libs`, or `APPIMAGE_EXTRACT_AND_RUN=1 ./…AppImage …` (§1c) |
 | permission denied writing data | make `/var/lib/behavioral-auth` writable, or repoint paths in config (§1b) |
 | camera not opening | set `face.camera_index`, or `face.enabled: false` if headless |
+| `status` says `SUSPENDED` | this is not the hardware the pattern was learned on (docked vs not). Reconnect it, or `behavioral-auth learn-more` to include this setup — see the note on what that costs |
 
 ---
 
@@ -262,7 +276,7 @@ so a Wazuh decoder reading the body is unaffected; only that one lookup misleads
 
 ## Known limitations & what to verify
 
-- **The whole Windows path is unverified on real hardware.** v0.4.0 was built and
+- **The whole Windows path is unverified on real hardware.** v0.5.0 was built and
   smoke-tested in CI (the bundle freezes, `behavioral-auth.exe` runs, the installer
   compiles). Nothing past that — the service under the SCM, live capture, an alarm reaching
   the Event Log, clean uninstall — has been run on a real Windows desktop yet.
@@ -274,6 +288,14 @@ so a Wazuh decoder reading the body is unaffected; only that one lookup misleads
   (e.g. a per-user *Task Scheduler* task "at log on", running in the user session) and use
   the service only for lifecycle/plumbing. **This is the first thing to confirm on
   hardware.**
+- **The hardware binding does not exist on Windows.** `pynput` installs one global hook and
+  cannot say which keyboard produced a keystroke, so the daemon cannot tell a docked setup
+  from an undocked one there. The `SUSPENDED` state simply never fires on Windows — it is
+  inert, not enforced. Reaching real per-device identity means RawInput (`WM_INPUT`), which
+  `pynput` does not expose.
+- **The Wazuh decoder has never run on a real manager.** `packaging/wazuh/` is checked for
+  well-formedness and against captured event frames only. Confirm it on yours with
+  `wazuh-logtest` before relying on the alerts; the procedure is in that folder's README.
 - **The AppImage is not a full install.** It does not set up the `input`/`video` groups, a
   writable data dir, or autostart — see the Linux prerequisites. For a turnkey Linux setup,
   use the from-source installer.
@@ -296,6 +318,19 @@ niego pasować. Opcjonalnie sprawdza też Twoją **twarz** z kamery.
 co robi, to wpis w logu, komunikat, powiadomienie na pulpicie i (jeśli włączysz) przesłanie
 zdarzenia do SIEM. Wszystko zostaje na maszynie, chyba że świadomie włączysz forwarding do
 SIEM.
+
+**Wzorzec należy do jednego zestawu sprzętu (Linux).** Inaczej pisze się na klawiaturze
+laptopa, a inaczej na zewnętrznej przez dock, więc wzorzec nauczony w doku nie jest używany
+do oceniania cię poza nim. Gdy sprzęt nie jest tym, na którym wzorzec powstał, `status`
+pokazuje **`SUSPENDED`** (ZAWIESZONY) i nic nie jest punktowane — celowo *nie* alarm, bo
+„odpiąłeś docka" to nie jest coś, na co możesz zareagować. Zbieranie danych trwa, a
+`behavioral-auth learn-more` dołączy nowy zestaw do wzorca.
+
+Miej świadomość ceny: wzorzec obejmujący dwa zestawy ma szerszy rozrzut i wyższy próg, więc
+przepuszcza **więcej** zachowań niż wzorzec z jednego zestawu. `learn-more` ostrzega o tym w
+momencie, w którym się to dzieje, a `behavioral-report` wypisuje zestawy objęte wzorcem. Na
+Windowsie to powiązanie w ogóle nie działa — patrz
+[Znane ograniczenia](#znane-ograniczenia--co-zweryfikować).
 
 **Cykl życia:** `LEARNING` (NAUKA) → `MONITORING` (NADZÓR) → `ALARM`. Uczy się, aż zbierze
 dość Twojego zachowania, zamraża wzorzec (promocja), potem punktuje bieżące zachowanie
@@ -320,7 +355,7 @@ Te same pięć komend działa na obu systemach:
 
 ### 1. Instalacja
 
-Uruchom **`behavioral-auth-setup-0.4.0.exe`** (z release'u na GitHubie) jako administrator.
+Uruchom **`behavioral-auth-setup-0.5.0.exe`** (z release'u na GitHubie) jako administrator.
 Instalator:
 
 - instaluje aplikacje do `C:\Program Files\behavioral-auth\`;
@@ -495,6 +530,7 @@ dekoder Wazuha czytający ciało nic nie traci; myli wyłącznie to jedno wyszuk
 | AppImage nie startuje / błąd FUSE | `dnf install fuse-libs`, albo `APPIMAGE_EXTRACT_AND_RUN=1 ./…AppImage …` (§1c) |
 | brak uprawnień do zapisu danych | zrób `/var/lib/behavioral-auth` zapisywalnym, albo przekieruj ścieżki w configu (§1b) |
 | kamera się nie otwiera | ustaw `face.camera_index`, albo `face.enabled: false` bez kamery |
+| `status` pokazuje `SUSPENDED` | to nie jest sprzęt, na którym uczył się wzorzec (dok vs bez). Podłącz go z powrotem albo `behavioral-auth learn-more`, żeby objąć ten zestaw — patrz uwaga o cenie |
 
 ---
 
@@ -536,7 +572,7 @@ dekoder Wazuha czytający ciało nic nie traci; myli wyłącznie to jedno wyszuk
 
 ## Znane ograniczenia / co zweryfikować
 
-- **Cała ścieżka Windows jest niezweryfikowana na realnym sprzęcie.** v0.4.0 zbudowano i
+- **Cała ścieżka Windows jest niezweryfikowana na realnym sprzęcie.** v0.5.0 zbudowano i
   przetestowano dymnie w CI (bundle się zamraża, `behavioral-auth.exe` startuje, instalator
   się kompiluje). Nic dalej — usługa pod SCM, przechwytywanie na żywo, alarm w Dzienniku
   zdarzeń, czysta deinstalacja — nie było jeszcze uruchomione na prawdziwym desktopie.
@@ -547,6 +583,15 @@ dekoder Wazuha czytający ciało nic nie traci; myli wyłącznie to jedno wyszuk
   uruchamianie **`behavioral-authd.exe` w Twojej zalogowanej sesji** (np. zadanie
   *Harmonogramu zadań* „przy logowaniu", w sesji użytkownika), a usługa pełni tylko rolę
   cyklu życia. **To pierwsza rzecz do potwierdzenia na sprzęcie.**
+- **Powiązanie ze sprzętem nie istnieje na Windowsie.** `pynput` zakłada jeden globalny hook
+  i nie potrafi powiedzieć, która klawiatura wygenerowała naciśnięcie, więc demon nie odróżni
+  tam zestawu zadokowanego od niezadokowanego. Stan `SUSPENDED` po prostu nigdy tam nie
+  wystąpi — jest bezczynny, a nie egzekwowany. Prawdziwa tożsamość urządzeń wymaga RawInput
+  (`WM_INPUT`), czego `pynput` nie udostępnia.
+- **Dekoder Wazuha nigdy nie działał na prawdziwym managerze.** `packaging/wazuh/` jest
+  sprawdzony tylko pod kątem poprawności XML i dopasowania do przechwyconych ramek. Potwierdź
+  go u siebie przez `wazuh-logtest`, zanim zaufasz alertom; procedura jest w README tego
+  katalogu.
 - **AppImage to nie pełna instalacja.** Nie ustawia grup `input`/`video`, zapisywalnego
   katalogu danych ani autostartu — patrz wymagania wstępne Linuksa. Do gotowego układu użyj
   instalatora ze źródeł.

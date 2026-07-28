@@ -1,5 +1,100 @@
 # Changelog
 
+## 0.5.0 — the pattern is bound to the hardware it was learned on
+
+### The hardware stack
+
+A laptop used with a dock and without it is two different motor contexts: the
+built-in keyboard and trackpad against an external keyboard and mouse. Until now
+the daemon pooled them.
+
+- **A pattern trained across a mixture of hardware is more permissive**, not
+  merely noisier. The mixture has a wider spread, so the calibrated threshold
+  lands higher, so more behaviour passes it. Docking halfway through enrolment
+  widened the gate an impostor had to clear. This was the actual defect; the
+  false alarms after a dock change were the visible symptom.
+- **Every feature window now records which `(keyboard, mouse)` pair produced its
+  events**, identified by evdev `vendor:product` — not the device path, which
+  renumbers across boots and re-plugs. A window straddling a hardware change is
+  discarded, and no sequence spans one, for the same reason a sequence may not
+  span an idle gap: it is a transition, not a person.
+- **New `SUSPENDED` state.** On hardware the pattern was not trained on, the
+  daemon stops scoring and says so. It does *not* raise an alarm — "you
+  undocked" is not something you can act on, and alarms you cannot act on are
+  how a warning system teaches you to ignore it. Collection continues.
+- **`behavioral-report` and `status` show which stacks a pattern covers**, and
+  say plainly when there is more than one and what that costs.
+- Distinct from `PAUSED`, which remains your decision, and from `MONITORING`,
+  which while not scoring would have been a lie.
+
+### Input devices
+
+- **Hot-plug works.** The device list used to be read exactly once at startup, so
+  a keyboard attached through a dock afterwards was never opened at all.
+- **A device that disappears is reported.** Undocking used to kill its reader task
+  silently while the daemon went on believing it was watching.
+- Both are forwarded: `input_device_added`, `input_device_removed`,
+  `stack_changed`. A device attached while the machine is being watched is a
+  warning, not an informational note — attaching a keyboard is how input gets
+  injected.
+
+### SIEM
+
+- **A Wazuh decoder and ruleset now ship** in `packaging/wazuh/`. The claim that
+  the RFC 5424 + JSON framing existed "so a Wazuh decoder can read the fields"
+  had nothing behind it: no decoder was ever written, so events reached the
+  manager and matched nothing, which in Wazuh means they were dropped silently.
+  Rules 100200–100217, with alarms and pattern destruction at level 12.
+- The decoder deliberately does not key on the program name. journald's syslog
+  parser is RFC 3164, so it never lifts our identifier into `SYSLOG_IDENTIFIER`;
+  the name the manager sees falls back to the process name.
+- **What the stack events carry is the device type and a truncated fingerprint
+  hash — never device names or vendor/product ids.** The forwarding rule stays
+  what it was: verdicts and numbers, not an inventory.
+
+### Fixes
+
+- **`make demo` could not run at all.** It passes `--synthetic-input`, which is
+  refused in prod mode, and the only way to select dev mode was hand-editing
+  `general.mode`. `behavioral-authd` gains `--mode {dev,prod}`, applied before
+  the `config.<mode>.yaml` overlay is resolved — applying it after would have
+  relabelled the run while leaving the prod gates in place.
+- **`behavioral-auth set-profile user|impostor`** exposes a control command the
+  daemon already had and nothing could reach; the README previously told you to
+  call it through a `python -c` one-liner. Testing affordance only.
+- **`journalctl -t behavioral-auth` never worked** and the usage guide recommended
+  it. It returns nothing even when forwarding is working correctly. Use
+  `journalctl -f SYSLOG_FACILITY=10`.
+
+### Verified, and not
+
+The SIEM spool was exercised against real sockets for the first time: it holds
+while the sink is down, drains when it returns, survives a restart, and truncates
+loudly when full — dropping the oldest and saying so. The `syslog` sink was run
+against the real `/dev/log`, and its datagram→stream fallback against a
+stream-only socket. The Wazuh decoder has **not** been run against a real Wazuh
+manager, and the Windows path remains unverified on real hardware.
+
+## 0.4.0 — Windows
+
+Not previously written down; recorded here after the fact.
+
+- **A Windows input backend** built on `pynput`, emitting the same numeric event
+  rows as the evdev collector, with a VK→evdev keycode map. The evdev path is
+  untouched.
+- **An Event Log SIEM sink**, the Windows counterpart of `syslog` + agent, and a
+  pywin32 service wrapping the same daemon.
+- **A signed-nothing installer** built with Inno Setup, alongside the Linux
+  AppImage; both are attached to the GitHub release by CI.
+- Three portability defects in shared code, all found by the Windows CI before
+  any hardware run: the pidfile lock imported the Unix-only `fcntl`
+  unconditionally, the CLI's Polish text and `●/○` glyphs crashed on a cp1252
+  console, and the build scripts were mis-parsed as CP-1252 because of an em-dash.
+- **Windows remains unverified on real hardware**: the service under the SCM, the
+  live input hook, an alarm reaching the Event Log, and the installer registering
+  and removing the service. Everything up to "the frozen bundle imports and the
+  CLI runs" is CI-proven; nothing past that is.
+
 ## 0.3.0 — self-bootstrapping daemon
 
 The project stops being a set of scripts you run in order and becomes one daemon
