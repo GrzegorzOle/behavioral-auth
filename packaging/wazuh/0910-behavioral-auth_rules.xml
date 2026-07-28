@@ -1,0 +1,144 @@
+<!--
+  behavioral-auth -> Wazuh rules.
+
+  Install on the MANAGER as /var/ossec/etc/rules/0910-behavioral-auth_rules.xml,
+  then restart wazuh-manager.
+
+  Rule ids 100200-100212 sit in the user range (>= 100000); change them if that
+  block is already taken on your manager.
+
+  On the levels.
+  The daemon never locks a session — it only warns — so nothing here should be
+  read as "the box was defended". These levels say how much a human should care:
+
+    12  someone other than the enrolled person appears to be at the keyboard,
+        or the pattern that defines who that person is was destroyed
+     7  monitoring is knowingly blind (paused, or the daemon stopped)
+     5  the pattern was deliberately changed (learn-more)
+     3  routine lifecycle
+
+  A pattern reset sits at 12 with the alarms on purpose: it is how someone makes
+  the system forget who the owner is, and it is exactly what an attacker who
+  understands the tool would do first. Whether the owner asked for it is a
+  question for the analyst, not for the rule.
+-->
+
+<group name="behavioral_auth,">
+
+  <!-- Base: matches every decoded event, alerts on none of them. -->
+  <rule id="100200" level="0">
+    <decoded_as>behavioral-auth</decoded_as>
+    <description>behavioral-auth event</description>
+  </rule>
+
+  <!-- ── Alarms ─────────────────────────────────────────────────────────── -->
+
+  <rule id="100201" level="12">
+    <if_sid>100200</if_sid>
+    <field name="category">^alarm$</field>
+    <field name="action">^raised$</field>
+    <field name="detail.reason">^behavioral$</field>
+    <description>behavioral-auth: behaviour stopped matching the enrolled pattern ($(detail.ratio)x threshold for $(detail.span_sec)s)</description>
+    <group>authentication_failed,gdpr_IV_35.7.d,hipaa_164.312.b,pci_dss_10.2.4,</group>
+  </rule>
+
+  <!--
+    The face channel is deliberately NOT folded into the behavioural verdict in
+    the daemon, so it is not folded in here either: a camera alarm gets its own
+    rule and its own description. Reporting a camera verdict as a behavioural
+    one was a real bug once; do not merge these two.
+  -->
+  <rule id="100202" level="12">
+    <if_sid>100200</if_sid>
+    <field name="category">^alarm$</field>
+    <field name="action">^raised$</field>
+    <field name="detail.reason">^face$</field>
+    <description>behavioral-auth: the camera does not recognise the person at the keyboard</description>
+    <group>authentication_failed,gdpr_IV_35.7.d,</group>
+  </rule>
+
+  <rule id="100203" level="3">
+    <if_sid>100200</if_sid>
+    <field name="category">^alarm$</field>
+    <field name="action">^cleared$</field>
+    <description>behavioral-auth: alarm cleared after $(detail.held_sec)s (peak $(detail.peak_ratio)x)</description>
+  </rule>
+
+  <!-- ── Operations on the pattern itself ───────────────────────────────── -->
+
+  <rule id="100204" level="12">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^pattern_reset$</field>
+    <description>behavioral-auth: the enrolled pattern was DESTROYED — the system no longer knows who the owner is (purge_data=$(detail.purge_data))</description>
+    <group>gdpr_IV_35.7.d,pci_dss_10.5.2,</group>
+  </rule>
+
+  <rule id="100205" level="5">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^learn_more$</field>
+    <description>behavioral-auth: the enrolled pattern is being retrained (learn-more)</description>
+  </rule>
+
+  <!-- ── Windows in which nothing is being watched ──────────────────────── -->
+
+  <rule id="100206" level="7">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^paused$</field>
+    <description>behavioral-auth: scoring paused — nobody is being checked while this lasts</description>
+  </rule>
+
+  <rule id="100207" level="3">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^resumed$</field>
+    <description>behavioral-auth: scoring resumed</description>
+  </rule>
+
+  <rule id="100208" level="7">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^daemon_stopped$</field>
+    <description>behavioral-auth: the daemon stopped — the machine is no longer watched</description>
+  </rule>
+
+  <rule id="100209" level="3">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^daemon_started$</field>
+    <description>behavioral-auth: daemon started (mode $(detail.mode))</description>
+  </rule>
+
+  <!-- ── State machine ──────────────────────────────────────────────────── -->
+
+  <!--
+    The move into ALARM is the same fact as rule 100201/100202, arriving a
+    moment later. Kept at 3 so the timeline shows it without alerting twice.
+  -->
+  <rule id="100210" level="3">
+    <if_sid>100200</if_sid>
+    <field name="category">^state$</field>
+    <field name="action">^transition$</field>
+    <field name="detail.to_state">^ALARM$</field>
+    <description>behavioral-auth: state ALARM ($(detail.reason))</description>
+  </rule>
+
+  <rule id="100211" level="3">
+    <if_sid>100200</if_sid>
+    <field name="category">^state$</field>
+    <field name="action">^transition$</field>
+    <field name="detail.from_state">^LEARNING$</field>
+    <field name="detail.to_state">^MONITORING$</field>
+    <description>behavioral-auth: pattern promoted and frozen — monitoring has begun</description>
+  </rule>
+
+  <rule id="100212" level="3">
+    <if_sid>100200</if_sid>
+    <field name="category">^state$</field>
+    <field name="action">^transition$</field>
+    <description>behavioral-auth: state $(detail.from_state) -> $(detail.to_state) ($(detail.reason))</description>
+  </rule>
+
+</group>

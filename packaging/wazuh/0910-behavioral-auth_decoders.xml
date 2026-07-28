@@ -1,0 +1,33 @@
+<!--
+  behavioral-auth -> Wazuh decoders.
+
+  Install on the MANAGER as /var/ossec/etc/decoders/0910-behavioral-auth_decoders.xml
+  (not on the agent — decoding happens manager-side), then restart wazuh-manager.
+
+  What arrives here.
+  The daemon's syslog sink writes an RFC 5424 frame to /dev/log. journald stores
+  it and the agent's journald collector forwards it. Two consequences shape the
+  decoder below:
+
+    * journald's syslog parser is RFC 3164, so it never lifts our APP-NAME into
+      SYSLOG_IDENTIFIER. The program name the manager sees comes from the
+      process's _COMM instead, and is NOT reliable ("python" from a source
+      checkout, "behavioral-auth" from the installed bundle). So this decoder
+      must NOT key on the program name.
+    * What IS stable is the RFC 5424 MSGID we set — "<category>.<action>" —
+      followed by the NIL structured-data field and then the JSON body. That
+      triple is the anchor.
+
+  The prematch therefore ends exactly where the JSON begins, and JSON_Decoder
+  takes it from there: every key becomes a field, and the nested "detail" object
+  becomes detail.ratio, detail.reason, detail.from_state and so on.
+-->
+
+<decoder name="behavioral-auth">
+  <prematch type="pcre2"> - (?:alarm|state|ops)\.[a-z_]+ - </prematch>
+</decoder>
+
+<decoder name="behavioral-auth">
+  <parent>behavioral-auth</parent>
+  <plugin_decoder offset="after_prematch">JSON_Decoder</plugin_decoder>
+</decoder>
