@@ -287,21 +287,39 @@ apart.
 
 ## Known limitations & what to verify
 
-- **The Windows service does not start (0.5.1 and earlier) — known defect.** On a real box
-  the SCM logs events **7000** and **7009**: the service process never connects to the
-  Service Control Manager and is killed after the 120-second timeout. 7009 fires *before*
-  the daemon's own startup code runs, so this is **not** the Session 0 limitation below and
-  a slow first import does not explain it. **Workaround:** run `behavioral-authd.exe` in
-  your own session. To diagnose, run `behavioral-auth-service.exe debug` from an elevated
-  console — it runs the service in the foreground and prints the traceback the SCM swallows.
+- **The Windows service could not start at all, before 0.5.3.** It died resolving its
+  configuration inside the service startup, so the process never connected to the Service
+  Control Manager — which the SCM can only report as events **7000** and **7009**, "did not
+  respond to the start signal in time". That looked like a hang or a slow import and was
+  neither, and it was **not** the Session 0 limitation below: execution never got that far.
+  Two independent causes, both fixed in 0.5.3: the config search path had no Windows
+  equivalent of `/etc`, leaving the installer's config reachable only through a machine-wide
+  environment variable **that a service does not see until the machine reboots** (services
+  inherit an environment block cached at boot); and the bundled fallback config was packaged
+  under a name nothing ever looked for. **Upgrade rather than working around it.** If you
+  ever need to diagnose a service that will not start, `behavioral-auth-service.exe debug`
+  from an elevated console runs it in the foreground and prints the traceback the SCM
+  swallows.
 - **Windows learning could not complete before 0.5.2.** The Windows `torch` wheel is built
   against numpy 1.x, and the pinned numpy 2 made a trained model unable to return its
   reconstruction errors, so a learning cycle died just before promotion. Fixed in 0.5.2; on
   an older build, upgrade rather than working around it.
-- **Windows capture is still unverified on real hardware.** Confirmed on a live box on
-  2026-07-29: the installer installs, and uninstall deregisters the service while leaving
-  `C:\ProgramData\behavioral-auth\` in place. Still unwatched: the `pynput` hook capturing
-  real input, reaching MONITORING, and an alarm arriving in the Event Log.
+- **What has and has not been watched working on Windows** (live box, 2026-07-29).
+  Confirmed: the installer installs; uninstall deregisters the service and leaves
+  `C:\ProgramData\behavioral-auth\` in place; the `pynput` hook captures real keyboard and
+  mouse input; a full learning cycle completes, including the promotion sanity gate; the
+  frozen service host starts and reaches `LEARNING`. **Still unconfirmed:** capture under
+  the SCM (that service run was in `debug`, i.e. in the interactive session, which does not
+  answer the Session 0 question), promotion to MONITORING, and an alarm reaching the Event
+  Log.
+- **The face channel can fail silently.** The Windows default config ships
+  `face.enabled: true`. On a box where the camera is present and healthy but unavailable to
+  OpenCV — another application holding it, or Windows camera privacy settings blocking
+  desktop apps — every frame grab fails, and **the daemon's own log says nothing about it**;
+  the only trace is OpenCV output on stderr, which a service discards. A face channel that
+  never sees a frame therefore looks exactly like one that works. If you rely on face
+  checks, confirm with `behavioral-face verify` rather than assuming. Set
+  `face.enabled: false` if you do not want the channel at all.
 - **Windows Session 0 / service capture.** A Windows service runs as `LocalSystem` in the
   isolated *Session 0*, while you work in a separate interactive session. A global
   low-level input hook installed from Session 0 **may not receive your desktop's keyboard

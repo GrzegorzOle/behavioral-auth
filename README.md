@@ -362,25 +362,34 @@ Rather than a vague status, here is the actual split:
 
 | Confirmed | Not yet confirmed |
 |---|---|
-| The bundle builds and freezes on a Windows runner | The `pynput` hook capturing real keyboard and mouse input |
+| The bundle builds and freezes on a Windows runner | **Capture under the Service Control Manager** — the Session 0 question below |
 | `behavioral-auth.exe` and the report run | An alarm reaching the Event Log |
-| The installer compiles and produces a working `.exe` | Reaching MONITORING, and an alarm, during a real desktop session |
+| The installer compiles and produces a working `.exe` | Promotion to MONITORING (one stable cycle seen, a streak is needed) |
 | The OS-agnostic logic (keycode map, event shaping) is unit-tested | The Wazuh agent decoding an Event Log alarm |
-| **The installer installs on a real box** — Program Files layout, an editable config in ProgramData, the machine-wide `BEHAVIORAL_AUTH_CONFIG`, the service registered auto-start | |
+| **The installer installs on a real box** — Program Files layout, an editable config in ProgramData, the machine-wide `BEHAVIORAL_AUTH_CONFIG`, the service registered auto-start | The face channel reading a frame — see Known limitations |
 | **Uninstall is clean** — the service deregisters and `C:\ProgramData\behavioral-auth\` survives, as intended | |
+| **The `pynput` hook captures real keyboard and mouse input** on live hardware | |
+| **A full learning cycle completes** on Windows — training, scoring and the promotion sanity gate | |
+| **The frozen service host starts** and reaches `LEARNING` | |
 
-**Known defect — the service does not start (0.5.1 and earlier).** On a real box the
-SCM refuses it with events 7000 and 7009: the process never connects to the Service
-Control Manager and is killed after the 120-second timeout. Because 7009 fires *before*
-the daemon's own startup runs, this is not the Session 0 limitation below — the input
-hook never gets far enough to be the problem. Until it is fixed, run
-`behavioral-authd.exe` in your own session. Being tracked; see `docs/USAGE.md`.
+All of this was watched on a live Windows box on 2026-07-29; everything unmarked runs in
+CI on every release.
 
-Everything in the left column above the rule runs in CI on every release; the two bold
-rows were watched on a live Windows box on 2026-07-29. It stays a beta because the parts
-that matter most — capture and alarms during a real session — still have not been seen
-working, and because the service is known broken. `docs/USAGE.md` says the same, and
-lists what to check on hardware.
+**Read the service row precisely.** The service *host* was confirmed started in `debug`
+mode, which runs **in the interactive user session**. That is not the same as running
+under the SCM in Session 0, and it deliberately does not answer that question — which is
+why capture under the SCM is still in the right-hand column.
+
+**Fixed in 0.5.3 — the service could not start at all (0.5.2 and earlier).** It died
+resolving its configuration before it could report to the SCM, which the SCM could only
+describe as events 7000/7009, "did not respond to the start signal in time". Two causes:
+the search path had no Windows equivalent of `/etc`, so the installer's config was
+reachable only through a machine-wide environment variable that the SCM does not see until
+the box reboots; and the bundled default config was packaged under a name nothing looked
+for. If you are on 0.5.2 or earlier, upgrade — there is no workaround worth applying.
+
+It stays a beta: alarms have never been seen reaching the Event Log, and the service has
+not been watched capturing under the SCM. `docs/USAGE.md` lists what to check on hardware.
 
 Two Windows-specific limits worth knowing before you rely on it:
 

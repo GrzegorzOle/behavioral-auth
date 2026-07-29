@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.3 — the Windows service can find its configuration
+
+- **Fixed: the Windows service could not start at all.** It died resolving its
+  configuration before it could report to the Service Control Manager, and the SCM
+  has no way to describe that except events 7000/7009 — "did not respond to the start
+  signal in time". So it read as a hang, or a slow first import, and was neither. It
+  was also **not** the Session 0 limitation: execution never reached the input hook.
+- **Two independent causes, either one sufficient.** The config search path had no
+  Windows equivalent of `/etc`, so the editable config the installer writes to
+  `%PROGRAMDATA%\behavioral-auth` was reachable only through the machine-wide
+  `BEHAVIORAL_AUTH_CONFIG` — and **a machine-wide variable set during install is not
+  visible to a service until the machine reboots**, because services inherit an
+  environment block cached at boot. That path is now searched, so the variable is an
+  override again rather than the only way in. Separately, the bundled default config
+  was packaged into the bundle under its source name, `config.windows.yaml`, while the
+  loader only ever looks for `config/config.yaml` — a PyInstaller `datas` entry cannot
+  rename, since its second element is a destination *directory*. The out-of-the-box
+  fallback therefore did not exist on Windows at all. The Linux packaging was always
+  correct, which is why neither showed up there.
+- The search list is built per call rather than frozen at import: `%PROGRAMDATA%` is
+  read from an environment a service does not share with an interactive shell.
+- **Documentation now reports what was watched working on hardware**, and is careful
+  about what was not. Confirmed live: the `pynput` hook capturing real keyboard and
+  mouse input, a full learning cycle including the promotion sanity gate, and the
+  frozen service host reaching `LEARNING`. Still unconfirmed and said so plainly:
+  capture under the SCM — that run was in `debug`, which executes in the interactive
+  session and deliberately does not answer the Session 0 question — promotion to
+  MONITORING, and an alarm reaching the Event Log.
+- **New known limitation: the face channel can fail silently.** Where the camera is
+  present but unavailable to OpenCV, every frame grab fails and the daemon's own log
+  says nothing — the only trace is library output on stderr, which a service discards.
+  Documented in `docs/USAGE.md`; not yet fixed.
+
 ## 0.5.2 — Windows could not finish learning
 
 - **Fixed: on Windows a learning cycle died just before promotion.** The Windows
