@@ -362,16 +362,25 @@ Rather than a vague status, here is the actual split:
 
 | Confirmed | Not yet confirmed |
 |---|---|
-| The bundle builds and freezes on a Windows runner | The service capturing input under the SCM |
+| The bundle builds and freezes on a Windows runner | The `pynput` hook capturing real keyboard and mouse input |
 | `behavioral-auth.exe` and the report run | An alarm reaching the Event Log |
-| The installer compiles and produces a working `.exe` | The installer registering and removing the service on a live box |
-| The OS-agnostic logic (keycode map, event shaping) is unit-tested | Anything at all during a real desktop session |
+| The installer compiles and produces a working `.exe` | Reaching MONITORING, and an alarm, during a real desktop session |
+| The OS-agnostic logic (keycode map, event shaping) is unit-tested | The Wazuh agent decoding an Event Log alarm |
+| **The installer installs on a real box** — Program Files layout, an editable config in ProgramData, the machine-wide `BEHAVIORAL_AUTH_CONFIG`, the service registered auto-start | |
+| **Uninstall is clean** — the service deregisters and `C:\ProgramData\behavioral-auth\` survives, as intended | |
 
-Everything in the left column runs in CI on every release. Nothing in the right
-column has been exercised, because there is no Windows machine on this project.
-That is why it is a beta rather than a release: not because parts are missing,
-but because the parts that exist have not been watched working. `docs/USAGE.md`
-says the same, and lists this as the first thing to check on hardware.
+**Known defect — the service does not start (0.5.1 and earlier).** On a real box the
+SCM refuses it with events 7000 and 7009: the process never connects to the Service
+Control Manager and is killed after the 120-second timeout. Because 7009 fires *before*
+the daemon's own startup runs, this is not the Session 0 limitation below — the input
+hook never gets far enough to be the problem. Until it is fixed, run
+`behavioral-authd.exe` in your own session. Being tracked; see `docs/USAGE.md`.
+
+Everything in the left column above the rule runs in CI on every release; the two bold
+rows were watched on a live Windows box on 2026-07-29. It stays a beta because the parts
+that matter most — capture and alarms during a real session — still have not been seen
+working, and because the service is known broken. `docs/USAGE.md` says the same, and
+lists what to check on hardware.
 
 Two Windows-specific limits worth knowing before you rely on it:
 

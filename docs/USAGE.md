@@ -287,10 +287,21 @@ apart.
 
 ## Known limitations & what to verify
 
-- **The whole Windows path is unverified on real hardware.** v0.5.1 was built and
-  smoke-tested in CI (the bundle freezes, `behavioral-auth.exe` runs, the installer
-  compiles). Nothing past that — the service under the SCM, live capture, an alarm reaching
-  the Event Log, clean uninstall — has been run on a real Windows desktop yet.
+- **The Windows service does not start (0.5.1 and earlier) — known defect.** On a real box
+  the SCM logs events **7000** and **7009**: the service process never connects to the
+  Service Control Manager and is killed after the 120-second timeout. 7009 fires *before*
+  the daemon's own startup code runs, so this is **not** the Session 0 limitation below and
+  a slow first import does not explain it. **Workaround:** run `behavioral-authd.exe` in
+  your own session. To diagnose, run `behavioral-auth-service.exe debug` from an elevated
+  console — it runs the service in the foreground and prints the traceback the SCM swallows.
+- **Windows learning could not complete before 0.5.2.** The Windows `torch` wheel is built
+  against numpy 1.x, and the pinned numpy 2 made a trained model unable to return its
+  reconstruction errors, so a learning cycle died just before promotion. Fixed in 0.5.2; on
+  an older build, upgrade rather than working around it.
+- **Windows capture is still unverified on real hardware.** Confirmed on a live box on
+  2026-07-29: the installer installs, and uninstall deregisters the service while leaving
+  `C:\ProgramData\behavioral-auth\` in place. Still unwatched: the `pynput` hook capturing
+  real input, reaching MONITORING, and an alarm arriving in the Event Log.
 - **Windows Session 0 / service capture.** A Windows service runs as `LocalSystem` in the
   isolated *Session 0*, while you work in a separate interactive session. A global
   low-level input hook installed from Session 0 **may not receive your desktop's keyboard

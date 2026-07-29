@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.2 — Windows could not finish learning
+
+- **Fixed: on Windows a learning cycle died just before promotion.** The Windows
+  `torch==2.4.0+cpu` wheel is built against numpy 1.x, so under the pinned numpy 2
+  a trained model could not hand its reconstruction errors back as an array
+  (`RuntimeError: Numpy is not available`). The model trained to completion and then
+  failed on the way out, so the pattern was never frozen. numpy is now pinned per
+  platform, the way `evdev` and `pynput` already were. Linux is unaffected and
+  unchanged.
+- **The training path is now tested at all.** Nothing in the suite called `fit` or
+  `reconstruction_errors` on any operating system, which is how the above shipped.
+  The new tests assert the full numpy → torch → numpy round trip: the inbound
+  direction kept working through the defect, so testing it alone would have passed
+  on a build that cannot return a result. They run in the Windows CI job too, which
+  previously never imported torch.
+- The two SIEM tests that need an `AF_UNIX` socket now skip on Windows instead of
+  failing, and the network-sink half of one of them was split out so it still runs
+  there. The Windows suite is a clean green rather than two failures to recognise.
+- **Documentation now reflects a real Windows box.** The installer and a clean
+  uninstall were watched working on hardware; capture and alarms still have not been.
+  A **known defect** is recorded in both README and `docs/USAGE.md`: the Windows
+  service does not start — the SCM reports 7000/7009, the process never connects
+  before the 120-second timeout, and this is distinct from the Session 0 caveat.
+  Until it is fixed, run `behavioral-authd.exe` in your own session.
+
 ## 0.5.1 — pattern age and drift in the report
 
 - **`behavioral-report` now shows how old the pattern is and whether scoring has
