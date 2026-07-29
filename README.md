@@ -362,23 +362,39 @@ Rather than a vague status, here is the actual split:
 
 | Confirmed | Not yet confirmed |
 |---|---|
-| The bundle builds and freezes on a Windows runner | **Capture under the Service Control Manager** — the Session 0 question below |
-| `behavioral-auth.exe` and the report run | An alarm reaching the Event Log |
-| The installer compiles and produces a working `.exe` | Promotion to MONITORING (one stable cycle seen, a streak is needed) |
-| The OS-agnostic logic (keycode map, event shaping) is unit-tested | The Wazuh agent decoding an Event Log alarm |
-| **The installer installs on a real box** — Program Files layout, an editable config in ProgramData, the machine-wide `BEHAVIORAL_AUTH_CONFIG`, the service registered auto-start | The face channel reading a frame — see Known limitations |
+| The bundle builds and freezes on a Windows runner | An alarm reaching the Event Log |
+| `behavioral-auth.exe` and the report run | Promotion to MONITORING (stable cycles seen, a streak is needed) |
+| The installer compiles and produces a working `.exe` | The Wazuh agent decoding an Event Log alarm |
+| The OS-agnostic logic (keycode map, event shaping) is unit-tested | The face channel reading a frame — see Known limitations |
+| **The installer installs on a real box** — Program Files layout, an editable config in ProgramData, the machine-wide `BEHAVIORAL_AUTH_CONFIG`, the service registered auto-start | |
 | **Uninstall is clean** — the service deregisters and `C:\ProgramData\behavioral-auth\` survives, as intended | |
-| **The `pynput` hook captures real keyboard and mouse input** on live hardware | |
+| **The `pynput` hook captures real keyboard and mouse input** in a user session | |
 | **A full learning cycle completes** on Windows — training, scoring and the promotion sanity gate | |
-| **The frozen service host starts** and reaches `LEARNING` | |
+| **The service starts and runs under the SCM** — `Running`, no error events | |
+| **A Session 0 service captures nothing** — measured, see below | |
 
-All of this was watched on a live Windows box on 2026-07-29; everything unmarked runs in
-CI on every release.
+All of this was watched on a live Windows box on 2026-07-29/30; everything unmarked runs
+in CI on every release.
 
-**Read the service row precisely.** The service *host* was confirmed started in `debug`
-mode, which runs **in the interactive user session**. That is not the same as running
-under the SCM in Session 0, and it deliberately does not answer that question — which is
-why capture under the SCM is still in the right-hand column.
+### Run it in your own session, not as a service
+
+**The Session 0 limitation is real, and it has now been measured rather than assumed.**
+The service starts correctly under the SCM and its input hook installs and says so in the
+log — and then receives nothing at all from the interactive desktop. Windows isolates
+services in Session 0; a low-level input hook installed there does not see input delivered
+to a user's session.
+
+How it was measured, because "the hook installed" is not evidence of capture: database
+growth over a few minutes of real typing and mouse movement was compared against an
+equally long period with nobody touching the machine. The idle period grew **slightly
+more** (165 vs 144 bytes/sec) — a flat background rate with no input-driven component.
+Mouse movement alone emits hundreds of events per second, so genuine capture would have
+been megabytes, not a rate indistinguishable from idle.
+
+**So install it to run in your own logged-in session** — a per-user *Task Scheduler* task
+"at log on" is the shape that works, and the same executable captures correctly there
+(confirmed on the same box). The service is still installed and started by the installer
+for now; it will run, log, and learn nothing.
 
 **The Windows service could not start at all before 0.5.6 — three defects in a row, each
 hiding the next.** Every one of them only ever showed up under the Service Control
@@ -397,20 +413,24 @@ a different code path, and those paths worked.
    was attached to it unconditionally, so startup died with `TypeError` inside logging
    setup. *Fixed in 0.5.6.*
 
-**Install 0.5.6.** Defect 1's fix is confirmed against the real SCM: the service now
-connects and reports started, and the failure mode moved from a 120-second timeout to an
-immediate service-specific error, which is how defect 3 was found.
+**Install 0.5.6.** All three fixes are confirmed against the real SCM: the service now
+starts, stays `Running`, and logs no error events. Each defect only became visible once
+the one before it was out of the way.
 
-It stays a beta: alarms have never been seen reaching the Event Log, and the service has
-not been watched capturing under the SCM. `docs/USAGE.md` lists what to check on hardware.
+It stays a beta: an alarm has never been seen reaching the Event Log, promotion to
+MONITORING has not been reached on Windows, and the install shape the installer sets up
+(a service) is the one that cannot capture. `docs/USAGE.md` lists what to check.
 
-Two Windows-specific limits worth knowing before you rely on it:
+Two further Windows-specific limits worth knowing before you rely on it:
 
 - **No per-device identity.** `pynput` is a single global hook and cannot say
   which keyboard produced a keystroke, so the hardware-stack binding described
   above does not apply there — it is inert, not enforced.
-- **A service in Session 0** may not see interactive desktop input at all; the
-  fallback is running `behavioral-auth.exe` in the user session.
+- **`behavioral-auth status` fails under a service install.** The daemon running as
+  `LocalSystem` creates its run directory owner-only, deliberately — that directory is
+  how control commands including `reset` are delivered, so it must not be writable by
+  anyone else. The side effect is that an unprivileged CLI cannot read the state file it
+  reports from. Running in your own session, as above, avoids this entirely.
 
 WSL2 with passthrough to `/dev/input` is a third option, and is Linux as far as
 the daemon is concerned.

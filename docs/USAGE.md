@@ -336,14 +336,21 @@ apart.
   never sees a frame therefore looks exactly like one that works. If you rely on face
   checks, confirm with `behavioral-face verify` rather than assuming. Set
   `face.enabled: false` if you do not want the channel at all.
-- **Windows Session 0 / service capture.** A Windows service runs as `LocalSystem` in the
-  isolated *Session 0*, while you work in a separate interactive session. A global
-  low-level input hook installed from Session 0 **may not receive your desktop's keyboard
-  and mouse events.** If so, the service will sit in `LEARNING` forever with no sequences.
-  The working setup is then to run **`behavioral-authd.exe` in your own logged-in session**
-  (e.g. a per-user *Task Scheduler* task "at log on", running in the user session) and use
-  the service only for lifecycle/plumbing. **This is the first thing to confirm on
-  hardware.**
+- **Windows Session 0: a service captures nothing. Measured, not assumed.** A Windows
+  service runs as `LocalSystem` in the isolated *Session 0* while you work in a separate
+  interactive session, and a low-level input hook installed there **does not receive your
+  desktop's keyboard and mouse events**. The service starts fine, the hook installs, and
+  the log says so — and no input arrives, so it sits in `LEARNING` forever with no
+  sequences. Do not read "hook active" in the log as evidence of capture; it is not.
+  How it was measured on 2026-07-30, in case you want to repeat it: compare database
+  growth across a few minutes of real typing and mouse movement against an equally long
+  idle period. The idle period grew *slightly more* (165 vs 144 bytes/sec) — a flat
+  background rate with no input-driven component. Mouse movement alone emits hundreds of
+  events per second, so real capture would have been megabytes.
+  **The working setup is to run `behavioral-authd.exe` in your own logged-in session** —
+  a per-user *Task Scheduler* task "at log on" — which was confirmed capturing on the same
+  box. The installer still registers and starts the service; until that changes, treat the
+  service as the thing that will not work and set up the scheduled task yourself.
 - **The hardware binding does not exist on Windows.** `pynput` installs one global hook and
   cannot say which keyboard produced a keystroke, so the daemon cannot tell a docked setup
   from an undocked one there. The `SUSPENDED` state simply never fires on Windows — it is
@@ -638,17 +645,26 @@ nadzoru. Pamiętaj: rosnąca mediana to dryf *albo* inna osoba, a system tego ni
 
 ## Znane ograniczenia / co zweryfikować
 
-- **Cała ścieżka Windows jest niezweryfikowana na realnym sprzęcie.** v0.5.1 zbudowano i
-  przetestowano dymnie w CI (bundle się zamraża, `behavioral-auth.exe` startuje, instalator
-  się kompiluje). Nic dalej — usługa pod SCM, przechwytywanie na żywo, alarm w Dzienniku
-  zdarzeń, czysta deinstalacja — nie było jeszcze uruchomione na prawdziwym desktopie.
-- **Windows Session 0 / przechwytywanie z usługi.** Usługa Windows działa jako
-  `LocalSystem` w izolowanej *Session 0*, a Ty pracujesz w osobnej sesji interaktywnej.
-  Globalny hook wejścia założony z Session 0 **może nie odbierać zdarzeń klawiatury i myszy
-  Twojego pulpitu.** Wtedy usługa zostanie w `LEARNING` bez sekwencji. Działający układ to
-  uruchamianie **`behavioral-authd.exe` w Twojej zalogowanej sesji** (np. zadanie
-  *Harmonogramu zadań* „przy logowaniu", w sesji użytkownika), a usługa pełni tylko rolę
-  cyklu życia. **To pierwsza rzecz do potwierdzenia na sprzęcie.**
+- **Co na Windowsie zostało sprawdzone na realnym sprzęcie (2026-07-29/30).** Działa:
+  instalator, czysta deinstalacja (dane w `C:\ProgramData\` zostają), start usługi pod SCM,
+  przechwytywanie klawiatury i myszy w sesji użytkownika, pełny cykl uczenia wraz z bramką
+  zdrowego rozsądku. Nadal niesprawdzone: alarm w Dzienniku zdarzeń, promocja do
+  MONITORING, dekoder Wazuh, odczyt klatki przez kanał twarzy.
+- **Windows Session 0: usługa nie przechwytuje niczego. Zmierzone, nie założone.** Usługa
+  działa jako `LocalSystem` w izolowanej *Session 0*, a Ty pracujesz w osobnej sesji
+  interaktywnej — i hook wejścia założony w Session 0 **nie odbiera zdarzeń Twojego
+  pulpitu**. Usługa startuje poprawnie, hook się zakłada i melduje w logu, a zdarzenia nie
+  przychodzą, więc zostaje w `LEARNING` bez sekwencji. **Nie traktuj wpisu „hook active" w
+  logu jako dowodu przechwytywania** — nie jest nim.
+  Jak to zmierzono, gdybyś chciał powtórzić: porównaj przyrost bazy przez kilka minut
+  realnego pisania i ruszania myszą z równie długim okresem bezczynności. Okres bezczynności
+  urósł *bardziej* (165 wobec 144 B/s), czyli przyrost jest stałym tłem bez składnika
+  pochodzącego z wejścia. Sam ruch myszy generuje setki zdarzeń na sekundę, więc prawdziwe
+  przechwytywanie dałoby megabajty.
+  **Działający układ to `behavioral-authd.exe` w Twojej zalogowanej sesji** — zadanie
+  *Harmonogramu zadań* „przy logowaniu" — co potwierdzono na tej samej maszynie. Instalator
+  nadal rejestruje i uruchamia usługę; dopóki to się nie zmieni, traktuj usługę jako to, co
+  nie zadziała, i ustaw zadanie samodzielnie.
 - **Powiązanie ze sprzętem nie istnieje na Windowsie.** `pynput` zakłada jeden globalny hook
   i nie potrafi powiedzieć, która klawiatura wygenerowała naciśnięcie, więc demon nie odróżni
   tam zestawu zadokowanego od niezadokowanego. Stan `SUSPENDED` po prostu nigdy tam nie
