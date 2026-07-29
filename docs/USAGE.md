@@ -296,8 +296,16 @@ apart.
   got near the input hook. It survived three releases because every invocation a person
   types (`install`, `start`, `stop`, `debug`) carries arguments and took a different path,
   one that worked; the only invocation nobody tries by hand is the only one the SCM uses.
-  **Install 0.5.5** — 0.5.4 contains the same fix, but its build failed before the Windows
-  installer was uploaded, so that version has no installer to download.
+  *Fixed in 0.5.4.* Confirmed against the real SCM: the service now connects and reports
+  started, and the failure moved from a 120-second timeout to an immediate error — which
+  is how the third defect below was found.
+- **A frozen service has no standard streams, and logging setup assumed it did.** With
+  `sys.stderr` set to `None`, attaching the logger to it raised `TypeError` and killed
+  startup before anything else ran — visible only under the SCM, since `debug` runs in a
+  console where stderr exists. *Fixed in 0.5.6, which is the version to install.* The same
+  hazard applied to the status console: a process with no console now gets no status block
+  whatever `daemon.console` asks for, instead of crashing. That matters for the Task
+  Scheduler fallback below, which also has no console window.
 - **A second, independent defect, fixed in 0.5.3: the service could not find its
   configuration.** The config search path had no Windows equivalent of `/etc`, leaving the
   installer's config reachable only through a machine-wide environment variable **that a

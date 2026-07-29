@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.6 — a service has no streams to log to
+
+- **Fixed: the Windows service died in logging setup.** A frozen service process has
+  `sys.stderr` set to `None` — there is no console attached — and the logger was
+  attached to it unconditionally, so startup raised
+  `TypeError: Cannot log to objects of type 'NoneType'` before anything else ran. The
+  file sink that a service actually logs through is added a few lines later and never
+  got the chance. Visible only under the SCM: `debug` runs in a console where stderr
+  exists, so every manual check passed.
+- **0.5.4's fix is confirmed working against the real Service Control Manager.** The
+  service now connects and reports started, and the failure moved from a 120-second
+  timeout (events 7000/7009) to an immediate service-specific error — which is how the
+  defect above was found. Three defects sat in a row, each hiding the next; the chain
+  is set out in the README.
+- **The status console no longer crashes without a console.** A process with no
+  `sys.stdout` gets no status block whatever `daemon.console` asks for, rather than
+  failing on `None.isatty()` under `auto` or on the first write under `always`. This
+  was latent rather than observed, and it matters for running `behavioral-authd.exe`
+  from Task Scheduler at logon — the documented fallback where a Session 0 service
+  cannot see the desktop, and which has no console window either.
+
 ## 0.5.5 — the release that carries both artifacts
 
 No product change whatsoever: the code is identical to 0.5.4. The build check

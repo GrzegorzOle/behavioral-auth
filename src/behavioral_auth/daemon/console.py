@@ -53,8 +53,15 @@ def _hms(seconds: float) -> str:
 
 class Console:
     def __init__(self, mode: str = 'auto'):
-        self.enabled = (mode == 'always'
-                        or (mode == 'auto' and sys.stdout.isatty()))
+        # A process with no console has sys.stdout set to None: a frozen Windows
+        # service, or behavioral-authd started from Task Scheduler at logon,
+        # which is the recommended fallback where a Session 0 service cannot see
+        # the desktop. There is nothing to draw the status block on, so the
+        # console is off whatever the mode asks for — `auto` would otherwise
+        # crash on None.isatty(), and `always` on the first write.
+        usable = sys.stdout is not None
+        self.enabled = usable and (mode == 'always'
+                                   or (mode == 'auto' and sys.stdout.isatty()))
         self.lock = threading.RLock()
         self.lines = 0
         self.started = time.monotonic()

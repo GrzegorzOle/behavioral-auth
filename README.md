@@ -380,17 +380,26 @@ mode, which runs **in the interactive user session**. That is not the same as ru
 under the SCM in Session 0, and it deliberately does not answer that question — which is
 why capture under the SCM is still in the right-hand column.
 
-**Fixed in 0.5.4 — the service could not start at all (0.5.3 and earlier).** The SCM
-starts the service executable with **no arguments** and waits for it to connect back; the
-executable instead printed its usage text and exited, so the SCM waited out its
-120-second timeout and reported events 7000/7009, "did not respond to the start signal in
-time". Every command a person types — `install`, `start`, `stop`, `debug` — carries
-arguments and took a different code path that worked, which is why this survived three
-releases and read variously as a hang, as a Session 0 problem, and as a configuration
-error. **0.5.3 does not contain this fix**; it fixed a *second*, genuine defect that sat
-one step further along, where the service could not find its configuration. **Install
-0.5.5** — 0.5.4 carries the same fix but its build failed before the Windows installer
-was uploaded, so that version has no installer to download.
+**The Windows service could not start at all before 0.5.6 — three defects in a row, each
+hiding the next.** Every one of them only ever showed up under the Service Control
+Manager, because every command a person types (`install`, `start`, `stop`, `debug`) takes
+a different code path, and those paths worked.
+
+1. The SCM starts the executable with **no arguments** and waits for it to connect back.
+   It printed its usage text and exited instead, so the SCM waited out its 120-second
+   timeout and logged events 7000/7009, "did not respond to the start signal in time" —
+   which reads like a hang and was a process that had already exited cleanly. *Fixed in
+   0.5.4.*
+2. The service could not find its configuration: no Windows equivalent of `/etc` in the
+   search path, and a bundled fallback config packaged under a name nothing looked for.
+   *Fixed in 0.5.3*, one step past defect 1, so on its own it changed nothing visible.
+3. A frozen service has **no standard streams** — `sys.stderr` is `None` — and the logger
+   was attached to it unconditionally, so startup died with `TypeError` inside logging
+   setup. *Fixed in 0.5.6.*
+
+**Install 0.5.6.** Defect 1's fix is confirmed against the real SCM: the service now
+connects and reports started, and the failure mode moved from a 120-second timeout to an
+immediate service-specific error, which is how defect 3 was found.
 
 It stays a beta: alarms have never been seen reaching the Event Log, and the service has
 not been watched capturing under the SCM. `docs/USAGE.md` lists what to check on hardware.

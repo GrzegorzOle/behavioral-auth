@@ -22,9 +22,17 @@ def setup_logging(cfg, console) -> None:
         logger.add(console.emit_log, level=cfg.general.log_level,
                    format='<green>{time:HH:mm:ss}</green> <level>{level: <7}</level> {message}',
                    colorize=True)
-    else:
+    elif sys.stderr is not None:
         logger.add(sys.stderr, level=cfg.general.log_level,
                    format='{time:HH:mm:ss} {level: <7} {message}', colorize=False)
+    # sys.stderr is None in a frozen Windows service: there is no console to
+    # attach to, and loguru rejects a None sink outright. Adding it
+    # unconditionally raised TypeError inside setup_logging, which killed the
+    # service before it did anything else — and only under the SCM, since
+    # `debug` runs in a console where stderr exists. The file sink below is
+    # what a service logs through; if general.log_file is also empty the
+    # daemon runs with no logging at all, which the packaged config avoids by
+    # always setting it.
 
     if cfg.general.log_file:
         os.makedirs(os.path.dirname(cfg.general.log_file), exist_ok=True)
