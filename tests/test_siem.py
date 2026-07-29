@@ -18,6 +18,14 @@ from behavioral_auth.siem.forwarder import Forwarder
 from behavioral_auth.siem.sinks import SinkError, SyslogSink, WazuhSink
 from behavioral_auth.siem.spool import Spool
 
+# SyslogSink writes to /dev/log, an AF_UNIX socket. Windows has no such address
+# family and no syslog to reach — its sink is `eventlog`. Skipping keeps the
+# Windows run a clean green instead of two failures someone has to recognise as
+# expected; everything not tied to the address family still runs there.
+requires_af_unix = pytest.mark.skipif(
+    not hasattr(socket, 'AF_UNIX'),
+    reason='AF_UNIX is Unix-only; the Windows SIEM sink is eventlog')
+
 
 @pytest.fixture
 def siem_cfg(cfg, tmp_path):
@@ -132,6 +140,7 @@ def test_emit_never_raises_when_the_spool_cannot_be_written(siem_cfg, monkeypatc
 
 # ── what actually goes on the wire ───────────────────────────────────────────
 
+@requires_af_unix
 def test_the_payload_is_rfc5424_with_a_json_message(tmp_path):
     sock_path = tmp_path / 'log.sock'
     server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -160,12 +169,16 @@ def test_the_payload_is_rfc5424_with_a_json_message(tmp_path):
     assert payload['category'] == 'alarm'
 
 
-def test_an_unreachable_sink_raises_rather_than_pretending(tmp_path):
+@requires_af_unix
+def test_an_unreachable_syslog_sink_raises_rather_than_pretending(tmp_path):
     """The spool can only hold an event back if the sink admits it failed."""
     with pytest.raises(SinkError):
         SyslogSink(str(tmp_path / 'nothing-here.sock'), 10, 'x').send(
             Event(category=Category.OPS, action='daemon_started'))
 
+
+def test_an_unreachable_wazuh_sink_raises_rather_than_pretending():
+    """Same promise for the network sink — and this one runs on Windows too."""
     with pytest.raises(SinkError):
         WazuhSink('127.0.0.1', 1, 'tcp', 10, 'x', timeout=1.0).send(
             Event(category=Category.OPS, action='daemon_started'))

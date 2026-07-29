@@ -8,7 +8,14 @@ evdev==1.7.0 ; sys_platform == "linux"     # Linux: reads /dev/input
 pynput==1.7.6 ; sys_platform == "win32"    # Windows: global keyboard/mouse hook
 pywin32==306 ; sys_platform == "win32"     # Windows: Event Log sink + service (SCM)
 loguru==0.7.3
-numpy==2.0.1
+# numpy is platform-split for the same reason evdev/pynput are, but a subtler
+# one: the Windows torch==2.4.0+cpu wheel is built against numpy 1.x, so under
+# numpy 2 a tensor cannot cross back out (`.numpy()` raises "Numpy is not
+# available") and a learning cycle dies computing its reconstruction errors.
+# The Linux wheel of the same torch handles numpy 2 fine. tests/test_training.py
+# pins the round trip on both. Revisit when torch is bumped past 2.5.
+numpy==1.26.4 ; sys_platform == "win32"
+numpy==2.0.1 ; sys_platform != "win32"
 onnx==1.16.2
 onnxruntime==1.19.2
 opencv-contrib-python>=4.10,<5
