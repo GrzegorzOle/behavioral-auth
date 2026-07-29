@@ -1,7 +1,9 @@
 """Configuration loading and schema.
 
-Settings come from a YAML file, searched in BEHAVIORAL_AUTH_CONFIG, then
-/etc/behavioral-auth/config.yaml, then config/config.yaml, then config.yaml.
+Settings come from a YAML file, searched in BEHAVIORAL_AUTH_CONFIG, then the
+machine-wide location (/etc/behavioral-auth/config.yaml on Unix,
+%PROGRAMDATA%\\behavioral-auth\\config.yaml on Windows), then config/config.yaml,
+then config.yaml.
 A mode-specific overlay (config.<mode>.yaml, e.g. config.dev.yaml) sitting
 next to the base file is deep-merged on top of it.
 """
@@ -255,11 +257,34 @@ class Settings(BaseModel):
     siem: SiemCfg = SiemCfg()
 
 
-_SEARCH_PATHS = [
-    '/etc/behavioral-auth/config.yaml',
-    'config/config.yaml',
-    'config.yaml',
-]
+def _system_config_path() -> str:
+    """The machine-wide config location, per OS.
+
+    Windows has no /etc. The installer writes an editable config to
+    %PROGRAMDATA%\\behavioral-auth and points BEHAVIORAL_AUTH_CONFIG at it, but a
+    machine-wide environment variable set during install is *not* visible to the
+    Service Control Manager until the box reboots — services inherit an
+    environment block cached at boot. Leaving this path out of the search made
+    that variable load-bearing, so the service died resolving its config before
+    it could report to the SCM, which the SCM reports only as "did not respond to
+    the start signal in time" (7000/7009). The variable is an override again now,
+    not the only way in.
+    """
+    if sys.platform == 'win32':
+        base = os.environ.get('PROGRAMDATA') or r'C:\ProgramData'
+        return str(Path(base) / 'behavioral-auth' / 'config.yaml')
+    return '/etc/behavioral-auth/config.yaml'
+
+
+def _search_paths() -> list[str]:
+    """Resolved per call, not frozen at import: %PROGRAMDATA% is read from the
+    environment, and a service inherits a different one from an interactive
+    shell."""
+    return [
+        _system_config_path(),
+        'config/config.yaml',
+        'config.yaml',
+    ]
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -289,7 +314,7 @@ def config_path() -> str:
         exe_dir = Path(sys.executable).resolve().parent
         candidates += [str(exe_dir / 'config.yaml'),
                        str(exe_dir / 'config' / 'config.yaml')]
-    candidates += _SEARCH_PATHS
+    candidates += _search_paths()
     if frozen:
         bundle_root = Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent))
         candidates.append(str(bundle_root / 'config' / 'config.yaml'))

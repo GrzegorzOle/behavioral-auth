@@ -18,6 +18,7 @@
 # torch is the CPU wheel (requirements.txt), so no CUDA libraries are pulled in.
 # Not runtime-verified on a real Windows box yet — see Planned work, Stage 2.
 
+import shutil
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
@@ -45,10 +46,21 @@ hiddenimports += ['win32timezone', 'win32serviceutil', 'servicemanager',
 # default config (ProgramData paths + sink: eventlog), shipped as the bundled
 # config so the suite runs out of the box; config_path() still lets a config next
 # to the exe, or BEHAVIORAL_AUTH_CONFIG, override it.
+#
+# It has to land as config/config.yaml, which is the only name config_path()
+# looks for inside a bundle. A datas entry cannot rename — its second element is
+# a destination *directory* — so shipping config.windows.yaml directly put the
+# file in the bundle under a name nothing ever tried, and the out-of-the-box
+# fallback silently did not exist on Windows. Copy it to the right name first.
+_staged_config = ROOT / 'build' / 'windows-config'
+_staged_config.mkdir(parents=True, exist_ok=True)
+shutil.copyfile(ROOT / 'packaging' / 'windows' / 'config.windows.yaml',
+                _staged_config / 'config.yaml')
+
 datas += [
     (str(ROOT / 'src' / 'behavioral_auth' / 'db' / 'migrations'),
      'behavioral_auth/db/migrations'),
-    (str(ROOT / 'packaging' / 'windows' / 'config.windows.yaml'), 'config'),
+    (str(_staged_config / 'config.yaml'), 'config'),
 ]
 
 _EXCLUDES = ['triton', 'scipy', 'sklearn', 'tkinter', 'matplotlib',

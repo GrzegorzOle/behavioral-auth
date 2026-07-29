@@ -1,8 +1,15 @@
 """Config loading: the mode overlay, and the --mode override that drives it."""
 
+import sys
+
 import yaml
 
-from behavioral_auth.config import load_settings
+from behavioral_auth.config import (
+    _search_paths,
+    _system_config_path,
+    config_path,
+    load_settings,
+)
 
 BASE = {
     'general': {'mode': 'prod', 'data_dir': '/tmp/ba'},
@@ -58,3 +65,63 @@ def test_no_override_leaves_the_file_alone(tmp_path):
     cfg = load_settings(_write(tmp_path), mode=None)
     assert cfg.general.mode == 'prod'
     assert cfg.learning.min_sequences == 900
+
+
+# ── where the config is looked for ───────────────────────────────────────────
+#
+# The Windows service used to die here before it could report to the SCM, which
+# surfaces only as "did not respond to the start signal in time" (7000/7009).
+# The installer writes an editable config to %PROGRAMDATA%\behavioral-auth and
+# points BEHAVIORAL_AUTH_CONFIG at it — but a machine-wide variable set during
+# install is not visible to the SCM until the box reboots, and the search path
+# had no Windows equivalent of /etc, so there was nothing to fall back to.
+
+def test_the_machine_wide_config_is_under_programdata_on_windows(monkeypatch):
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setenv('PROGRAMDATA', r'C:\ProgramData')
+    assert _system_config_path() == r'C:\ProgramData\behavioral-auth\config.yaml'
+
+
+def test_a_relocated_programdata_is_honoured(monkeypatch):
+    """%PROGRAMDATA% is not always on C:, and it is read per call rather than
+    frozen at import — a service inherits a different environment than a shell."""
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setenv('PROGRAMDATA', r'D:\ProgramData')
+    assert _system_config_path().startswith(r'D:\ProgramData')
+
+
+def test_windows_falls_back_when_programdata_is_unset(monkeypatch):
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.delenv('PROGRAMDATA', raising=False)
+    assert _system_config_path() == r'C:\ProgramData\behavioral-auth\config.yaml'
+
+
+def test_unix_keeps_etc(monkeypatch):
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    assert _system_config_path() == '/etc/behavioral-auth/config.yaml'
+
+
+def test_the_machine_wide_location_is_searched_before_the_working_directory(
+        monkeypatch, tmp_path):
+    """Order matters: a config.yaml lying in the process's cwd must not quietly
+    win over the one an administrator installed."""
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setenv('PROGRAMDATA', str(tmp_path))
+    paths = _search_paths()
+    assert paths[0] == str(tmp_path / 'behavioral-auth' / 'config.yaml')
+    assert paths[1:] == ['config/config.yaml', 'config.yaml']
+
+
+def test_config_path_finds_the_machine_wide_file_without_the_env_var(
+        monkeypatch, tmp_path):
+    """The regression: with BEHAVIORAL_AUTH_CONFIG absent — which is what the
+    SCM sees until a reboot — the installed config must still be found."""
+    monkeypatch.delenv('BEHAVIORAL_AUTH_CONFIG', raising=False)
+    monkeypatch.chdir(tmp_path)                       # no config.yaml in cwd
+    installed = tmp_path / 'machine' / 'behavioral-auth' / 'config.yaml'
+    installed.parent.mkdir(parents=True)
+    installed.write_text(yaml.safe_dump(BASE))
+    monkeypatch.setattr('behavioral_auth.config._system_config_path',
+                        lambda: str(installed))
+
+    assert config_path() == str(installed)
