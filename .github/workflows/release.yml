@@ -150,16 +150,22 @@ jobs:
       # after a two-minute wait. From a console the dispatcher cannot connect and
       # fails with error 1063; that failure is the proof it is being called at
       # all. Match on the numeric code, since the message is localised.
+      # Note the deliberate `exit 0`: the executable is *supposed* to fail here,
+      # so it leaves $LASTEXITCODE at 1, and the pwsh step would otherwise inherit
+      # that and fail the job after the checks had already passed. A `throw` above
+      # still fails the step, so nothing is swallowed.
       - name: The service executable must talk to the SCM, not print usage
         run: |
           $out = & dist\behavioral-auth\behavioral-auth-service.exe 2>&1 | Out-String
+          $code = $LASTEXITCODE
           if ($out -match 'Usage:') {
             throw "service exe printed usage with no arguments - the SCM would never see it connect"
           }
           if ($out -notmatch '1063') {
             throw "expected StartServiceCtrlDispatcher to fail with 1063 from a console; got: $out"
           }
-          Write-Host "OK: the service executable calls StartServiceCtrlDispatcher"
+          Write-Host "OK: the service executable calls StartServiceCtrlDispatcher (exit $code, as expected)"
+          exit 0
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
