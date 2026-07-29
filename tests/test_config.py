@@ -1,6 +1,7 @@
 """Config loading: the mode overlay, and the --mode override that drives it."""
 
 import sys
+from pathlib import PureWindowsPath
 
 import yaml
 
@@ -76,10 +77,24 @@ def test_no_override_leaves_the_file_alone(tmp_path):
 # install is not visible to the SCM until the box reboots, and the search path
 # had no Windows equivalent of /etc, so there was nothing to fall back to.
 
+def _same_windows_path(produced: str, expected: str) -> bool:
+    """Compare as Windows paths, not as strings.
+
+    These tests fake sys.platform, but pathlib still uses the *host's* flavour:
+    on a Linux runner `Path(r'C:\\ProgramData') / 'behavioral-auth'` yields
+    'C:\\ProgramData/behavioral-auth', with forward slashes. A plain string
+    comparison therefore passes on Windows and fails in CI, which is exactly how
+    this got past a green local run once. PureWindowsPath normalises both
+    separators, so the assertion means the same thing on either host.
+    """
+    return PureWindowsPath(produced) == PureWindowsPath(expected)
+
+
 def test_the_machine_wide_config_is_under_programdata_on_windows(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'win32')
     monkeypatch.setenv('PROGRAMDATA', r'C:\ProgramData')
-    assert _system_config_path() == r'C:\ProgramData\behavioral-auth\config.yaml'
+    assert _same_windows_path(_system_config_path(),
+                              r'C:\ProgramData\behavioral-auth\config.yaml')
 
 
 def test_a_relocated_programdata_is_honoured(monkeypatch):
@@ -93,7 +108,8 @@ def test_a_relocated_programdata_is_honoured(monkeypatch):
 def test_windows_falls_back_when_programdata_is_unset(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'win32')
     monkeypatch.delenv('PROGRAMDATA', raising=False)
-    assert _system_config_path() == r'C:\ProgramData\behavioral-auth\config.yaml'
+    assert _same_windows_path(_system_config_path(),
+                              r'C:\ProgramData\behavioral-auth\config.yaml')
 
 
 def test_unix_keeps_etc(monkeypatch):
