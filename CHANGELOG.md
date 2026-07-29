@@ -1,6 +1,22 @@
 # Changelog
 
+## 0.5.5 — the release that carries both artifacts
+
+No product change whatsoever: the code is identical to 0.5.4. The build check
+introduced in 0.5.4 ran the service executable, which is *meant* to fail from a
+console, and then inherited that failure as its own result — so the job died after
+building and before uploading, and 0.5.4 shipped without a Windows installer. The
+step now reports the expected exit code and returns success explicitly.
+
+**If you are on Windows, this is the release to install**; 0.5.4 has no installer.
+On Linux 0.5.4 and 0.5.5 are the same software.
+
 ## 0.5.4 — the Windows service actually starts
+
+> **Linux only.** No Windows installer was published for this version: the new
+> build-time check on the service executable failed the job after the bundle was
+> built but before it was uploaded. The check was right and the fix below is in the
+> code; only the packaging step was lost. Windows users want **0.5.5**.
 
 - **Fixed: the service executable never talked to the Service Control Manager.** The
   SCM launches it with **no arguments** and waits for it to call

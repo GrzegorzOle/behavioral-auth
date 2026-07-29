@@ -296,7 +296,8 @@ apart.
   got near the input hook. It survived three releases because every invocation a person
   types (`install`, `start`, `stop`, `debug`) carries arguments and took a different path,
   one that worked; the only invocation nobody tries by hand is the only one the SCM uses.
-  **Upgrade to 0.5.4.**
+  **Install 0.5.5** — 0.5.4 contains the same fix, but its build failed before the Windows
+  installer was uploaded, so that version has no installer to download.
 - **A second, independent defect, fixed in 0.5.3: the service could not find its
   configuration.** The config search path had no Windows equivalent of `/etc`, leaving the
   installer's config reachable only through a machine-wide environment variable **that a

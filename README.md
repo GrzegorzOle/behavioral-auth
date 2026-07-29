@@ -388,8 +388,9 @@ time". Every command a person types — `install`, `start`, `stop`, `debug` — 
 arguments and took a different code path that worked, which is why this survived three
 releases and read variously as a hang, as a Session 0 problem, and as a configuration
 error. **0.5.3 does not contain this fix**; it fixed a *second*, genuine defect that sat
-one step further along, where the service could not find its configuration. Upgrade to
-0.5.4.
+one step further along, where the service could not find its configuration. **Install
+0.5.5** — 0.5.4 carries the same fix but its build failed before the Windows installer
+was uploaded, so that version has no installer to download.
 
 It stays a beta: alarms have never been seen reaching the Event Log, and the service has
 not been watched capturing under the SCM. `docs/USAGE.md` lists what to check on hardware.
