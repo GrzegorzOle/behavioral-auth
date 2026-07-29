@@ -35,6 +35,7 @@ When running from source rather than frozen:
 
 from __future__ import annotations
 
+import sys
 import threading
 
 import servicemanager
@@ -99,7 +100,26 @@ class BehavioralAuthService(win32serviceutil.ServiceFramework):
 
 
 def main() -> None:
-    win32serviceutil.HandleCommandLine(BehavioralAuthService)
+    """Dispatch on how we were invoked.
+
+    The SCM launches the service executable with **no arguments**, and expects
+    the process to call StartServiceCtrlDispatcher and connect back. Handing
+    that case to HandleCommandLine — which is what this did — prints the usage
+    text and exits, so the process was gone before the SCM ever heard from it.
+    The SCM can only describe that as "did not respond to the start signal in
+    time" (events 7000 and 7009, after the full 120-second timeout), which reads
+    like a hang and is nothing of the sort.
+
+    It also explains why `debug` worked while the service never did: every
+    command form (install/start/stop/remove/debug) carries arguments and so goes
+    down the HandleCommandLine path, which was the only path that existed.
+    """
+    if len(sys.argv) == 1:
+        servicemanager.Initialize()
+        servicemanager.PrepareToHostSingle(BehavioralAuthService)
+        servicemanager.StartServiceCtrlDispatcher()
+    else:
+        win32serviceutil.HandleCommandLine(BehavioralAuthService)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.4 — the Windows service actually starts
+
+- **Fixed: the service executable never talked to the Service Control Manager.** The
+  SCM launches it with **no arguments** and waits for it to call
+  `StartServiceCtrlDispatcher` and connect back. It instead printed its usage text and
+  exited, so the SCM waited out its 120-second timeout and reported events 7000/7009,
+  "did not respond to the start signal in time". A one-line omission, and the actual
+  reason the service had never once started.
+- **Why it survived three releases.** Every invocation a person types — `install`,
+  `start`, `stop`, `remove`, `debug` — carries arguments and went down a different code
+  path, the only one that existed, and that path worked. The one invocation nobody
+  tries by hand is the only one the SCM performs. Along the way the same symptom was
+  read as a hang, as the Session 0 limitation, and as a configuration error; each
+  reading was checked with a command that took the working path.
+- **0.5.3's fix was real, but it was not this.** It removed a second, independent
+  defect that sat one step further along — the service could not find its
+  configuration — which is why fixing it changed nothing visible. Both are needed.
+- The release build now runs the service executable with no arguments and fails if it
+  prints usage instead of failing with `StartServiceCtrlDispatcher` error 1063, which
+  from a console is what a correctly wired service does.
+- **The Linux AppImage is back**, having been missed by 0.5.3.
+
 ## 0.5.3 — the Windows service can find its configuration
 
 > **Windows only.** No AppImage was published for this version: a test that passed on

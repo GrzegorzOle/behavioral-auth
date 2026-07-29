@@ -380,13 +380,16 @@ mode, which runs **in the interactive user session**. That is not the same as ru
 under the SCM in Session 0, and it deliberately does not answer that question — which is
 why capture under the SCM is still in the right-hand column.
 
-**Fixed in 0.5.3 — the service could not start at all (0.5.2 and earlier).** It died
-resolving its configuration before it could report to the SCM, which the SCM could only
-describe as events 7000/7009, "did not respond to the start signal in time". Two causes:
-the search path had no Windows equivalent of `/etc`, so the installer's config was
-reachable only through a machine-wide environment variable that the SCM does not see until
-the box reboots; and the bundled default config was packaged under a name nothing looked
-for. If you are on 0.5.2 or earlier, upgrade — there is no workaround worth applying.
+**Fixed in 0.5.4 — the service could not start at all (0.5.3 and earlier).** The SCM
+starts the service executable with **no arguments** and waits for it to connect back; the
+executable instead printed its usage text and exited, so the SCM waited out its
+120-second timeout and reported events 7000/7009, "did not respond to the start signal in
+time". Every command a person types — `install`, `start`, `stop`, `debug` — carries
+arguments and took a different code path that worked, which is why this survived three
+releases and read variously as a hang, as a Session 0 problem, and as a configuration
+error. **0.5.3 does not contain this fix**; it fixed a *second*, genuine defect that sat
+one step further along, where the service could not find its configuration. Upgrade to
+0.5.4.
 
 It stays a beta: alarms have never been seen reaching the Event Log, and the service has
 not been watched capturing under the SCM. `docs/USAGE.md` lists what to check on hardware.

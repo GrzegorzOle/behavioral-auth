@@ -287,19 +287,26 @@ apart.
 
 ## Known limitations & what to verify
 
-- **The Windows service could not start at all, before 0.5.3.** It died resolving its
-  configuration inside the service startup, so the process never connected to the Service
-  Control Manager — which the SCM can only report as events **7000** and **7009**, "did not
-  respond to the start signal in time". That looked like a hang or a slow import and was
-  neither, and it was **not** the Session 0 limitation below: execution never got that far.
-  Two independent causes, both fixed in 0.5.3: the config search path had no Windows
-  equivalent of `/etc`, leaving the installer's config reachable only through a machine-wide
-  environment variable **that a service does not see until the machine reboots** (services
-  inherit an environment block cached at boot); and the bundled fallback config was packaged
-  under a name nothing ever looked for. **Upgrade rather than working around it.** If you
-  ever need to diagnose a service that will not start, `behavioral-auth-service.exe debug`
-  from an elevated console runs it in the foreground and prints the traceback the SCM
-  swallows.
+- **The Windows service could not start at all, before 0.5.4.** The SCM launches the
+  service executable with **no arguments** and waits for it to call
+  `StartServiceCtrlDispatcher` and connect back. It instead printed its usage text and
+  exited, so the SCM waited out its full 120-second timeout and logged events **7000** and
+  **7009**, "did not respond to the start signal in time". That reads like a hang and is
+  nothing of the sort, and it is **not** the Session 0 limitation below — execution never
+  got near the input hook. It survived three releases because every invocation a person
+  types (`install`, `start`, `stop`, `debug`) carries arguments and took a different path,
+  one that worked; the only invocation nobody tries by hand is the only one the SCM uses.
+  **Upgrade to 0.5.4.**
+- **A second, independent defect, fixed in 0.5.3: the service could not find its
+  configuration.** The config search path had no Windows equivalent of `/etc`, leaving the
+  installer's config reachable only through a machine-wide environment variable **that a
+  service does not see until the machine reboots** (services inherit an environment block
+  cached at boot); and the bundled fallback config was packaged under a name nothing ever
+  looked for. This one sat one step past the failure above, so fixing it alone changed
+  nothing visible. If you ever need to diagnose a service that will not start,
+  `behavioral-auth-service.exe debug` from an elevated console runs it in the foreground
+  and prints the traceback the SCM swallows — but note that `debug` takes the path that
+  always worked, so it cannot reveal a fault in the SCM path itself.
 - **Windows learning could not complete before 0.5.2.** The Windows `torch` wheel is built
   against numpy 1.x, and the pinned numpy 2 made a trained model unable to return its
   reconstruction errors, so a learning cycle died just before promotion. Fixed in 0.5.2; on

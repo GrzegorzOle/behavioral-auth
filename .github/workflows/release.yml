@@ -142,6 +142,25 @@ jobs:
           if (-not (Test-Path $setup)) { throw "installer missing: $setup" }
           Write-Host "OK: bundle runs and installer present"
 
+      # The SCM starts the service executable with NO arguments and waits for it
+      # to connect back. Every command a human types (install/start/stop/debug)
+      # carries arguments and takes a different path, so this is the one
+      # invocation that never got tried by hand -- and for three releases it just
+      # printed usage and exited, which the SCM could only report as 7000/7009
+      # after a two-minute wait. From a console the dispatcher cannot connect and
+      # fails with error 1063; that failure is the proof it is being called at
+      # all. Match on the numeric code, since the message is localised.
+      - name: The service executable must talk to the SCM, not print usage
+        run: |
+          $out = & dist\behavioral-auth\behavioral-auth-service.exe 2>&1 | Out-String
+          if ($out -match 'Usage:') {
+            throw "service exe printed usage with no arguments - the SCM would never see it connect"
+          }
+          if ($out -notmatch '1063') {
+            throw "expected StartServiceCtrlDispatcher to fail with 1063 from a console; got: $out"
+          }
+          Write-Host "OK: the service executable calls StartServiceCtrlDispatcher"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
