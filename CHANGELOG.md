@@ -2,6 +2,12 @@
 
 ## 0.5.3 — the Windows service can find its configuration
 
+> **Windows only.** No AppImage was published for this version: a test that passed on
+> Windows and failed on Linux stopped the `appimage` job before it built anything, so
+> the release carries the installer alone. The defect was in the test, not in the
+> shipped code. Linux users should stay on 0.5.2 — nothing here changes Linux
+> behaviour — and the AppImage returns with 0.5.4.
+
 - **Fixed: the Windows service could not start at all.** It died resolving its
   configuration before it could report to the Service Control Manager, and the SCM
   has no way to describe that except events 7000/7009 — "did not respond to the start
