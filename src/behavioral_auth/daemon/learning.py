@@ -119,6 +119,55 @@ class LearningController:
         self.last_result = None
         self.face_ready = False
 
+    def resume(self, conn, enrollment_id: str) -> None:
+        """Pick the cycle history back up from the last recorded cycle.
+
+        Every gate but one is derived from the database and so survives a
+        restart. The cycle state was not, and it is held in three fields that
+        each fail differently when they start from zero:
+
+          * ``stable_streak`` — promotion wants N stable cycles *in a row*, and
+            each cycle needs `cycle_min_new_sequences` fresh sequences. Starting
+            at zero means a machine that reboots more often than it can gather
+            N × that many sequences never promotes at all, however settled the
+            pattern is. This is the one that gets noticed.
+          * ``prev_shape`` — with no previous shape there is nothing to compare
+            against, so ``threshold_drift`` comes out 0.0 and the drift gate
+            passes for free. A restart was silently excusing the first cycle
+            after it from that check.
+          * ``seq_at_last_cycle`` — at zero, *every* sequence counts as new, so
+            a cycle fires immediately on restart over data the previous cycle
+            had already judged. Two of the cycles recorded for this enrollment
+            are that, not genuine progress.
+
+        Note the last two make promotion *harder*, which is the point: restoring
+        the streak alone would have handed back a gate the restart had disabled.
+
+        Scoped to *enrollment_id*, so `reset` still starts genuinely from zero —
+        a new enrollment has no cycles to resume from.
+        """
+        row = conn.execute(
+            'SELECT cycle_no, stable_streak, n_train, n_holdout, metrics_json '
+            'FROM learning_cycles WHERE enrollment_id = ? '
+            'ORDER BY ts_utc DESC LIMIT 1', [enrollment_id]).fetchone()
+        if not row:
+            return
+
+        cycle_no, streak, n_train, n_holdout, metrics = row
+        self.cycle_no = cycle_no or 0
+        self.stable_streak = streak or 0
+        self.seq_at_last_cycle = (n_train or 0) + (n_holdout or 0)
+        try:
+            self.prev_shape = json.loads(metrics).get('shape') if metrics else None
+        except (TypeError, ValueError):
+            self.prev_shape = None
+
+        logger.info(
+            f'Resuming learning history: {self.cycle_no} cycle(s) done, '
+            f'stable streak {self.stable_streak}/'
+            f'{self.cfg.learning.stable_consecutive_cycles}, '
+            f'{self.seq_at_last_cycle} sequences already judged')
+
     def next_cycle_in(self) -> int:
         remaining = self.cfg.learning.cycle_min_sec - (time.monotonic() - self.last_cycle_at)
         return max(0, int(remaining))

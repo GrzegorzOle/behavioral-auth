@@ -142,6 +142,7 @@ class Daemon:
         # next calibration happened to run. face.required_for_promotion is true by
         # default on both platforms, so that gate is load-bearing.
         self._refresh_face_ready(enrollment)
+        self.learn.resume(self.conn, enrollment)
 
         if status == 'active' and pattern and pattern.enrollment_id == enrollment:
             # Resume straight into monitoring. Do NOT retrain: the pattern is frozen.
