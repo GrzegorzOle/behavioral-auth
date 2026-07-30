@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.7 — a restart no longer holds promotion back
+
+- **Fixed: after any restart mid-enrolment, the face gate reported "face pattern not
+  ready" with a perfectly good model on disk.** `face_ready` starts false and was only
+  recomputed when resuming an already-frozen pattern, or after *this* process had itself
+  finished a calibration — never on the ordinary case of a daemon restarting while still
+  learning. Since `face.required_for_promotion` is true in both shipped configs, that
+  gate is load-bearing: promotion was blocked until the next calibration happened to
+  run. It self-healed, which is why it read as a slow start rather than a stuck one.
+- **Documentation now describes a Windows box that was actually watched working**, and is
+  explicit about the one thing that does not. A service in Session 0 **captures nothing**:
+  measured at 144 bytes/sec of background writes against 16 700 in a logged-in session,
+  with an idle control period to prove the difference was not input. So the supported
+  shape on Windows is a per-user *Task Scheduler* task at logon, not the service the
+  installer registers — README and `docs/USAGE.md` say so plainly now, in both languages.
+- Also corrected there: the face channel's OpenCV failures were previously attributed to
+  another application holding the camera. They were not. An RDP session has no webcam
+  unless camera redirection is enabled, and Session 0 has none either; at the physical
+  console the face model trains normally. The channel needs a real local session, and the
+  only genuine defect is that **nothing about the failure reaches the daemon's own log**.
+- Recorded as a known limitation rather than quietly patched: `behavioral-auth status`
+  cannot read its state file under a service install, because the daemon running as
+  `LocalSystem` creates the run directory owner-only. That restriction is deliberate —
+  control commands including `reset` are delivered through that directory — so the fix is
+  a design decision, not a patch. Running in your own session avoids it entirely.
+
 ## 0.5.6 — a service has no streams to log to
 
 - **Fixed: the Windows service died in logging setup.** A frozen service process has
