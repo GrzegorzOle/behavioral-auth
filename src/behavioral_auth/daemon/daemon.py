@@ -134,10 +134,18 @@ class Daemon:
             logger.error(f'Stored pattern is unusable: {exc}')
             pattern = None
 
+        # Both paths need this, and LEARNING needs it most. face_ready starts False
+        # and was previously only recomputed here when resuming a frozen pattern, or
+        # after this process had itself finished a calibration — so a daemon that
+        # restarted mid-enrolment reported "face pattern not ready" while a perfectly
+        # good model and its metadata sat on disk, and held promotion back until the
+        # next calibration happened to run. face.required_for_promotion is true by
+        # default on both platforms, so that gate is load-bearing.
+        self._refresh_face_ready(enrollment)
+
         if status == 'active' and pattern and pattern.enrollment_id == enrollment:
             # Resume straight into monitoring. Do NOT retrain: the pattern is frozen.
             self.pattern = pattern
-            self._refresh_face_ready(enrollment)
             self.store.transition(State.MONITORING, 'resumed frozen pattern from disk')
         else:
             self.store.transition(State.LEARNING, 'no usable pattern yet')
