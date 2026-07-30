@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.8 — cycle history survives a restart
+
+- **Fixed: restarting the daemon threw away its learning-cycle history.** Promotion
+  wants several *consecutive* stable cycles, and each cycle needs a fresh batch of
+  sequences — so a machine that reboots more often than it can gather all of them never
+  promoted at all, however settled the pattern was. Every other gate (sequences, active
+  minutes, distinct hours) is derived from the database and survived; the cycle state was
+  held only in memory. The database had been recording the streak on every cycle from the
+  start and nothing read it back.
+- **Two related gates had been silently *disabled* by every restart, and both are now
+  restored too.** Without the previous cycle's error shape, threshold drift computes as
+  zero, so that gate passed for free — a restart was excusing the next cycle from a check
+  it was meant to face. And with the sequence high-water mark at zero, every existing
+  sequence counted as new, so a cycle fired immediately on restart over data the previous
+  cycle had already judged. Restoring only the streak would have handed promotion an
+  easier path, not a fairer one.
+- History is resumed per enrollment, so `behavioral-auth reset` still starts from
+  genuinely nothing, and an unstable last cycle is resumed as unstable rather than
+  laundered into a streak.
+
 ## 0.5.7 — a restart no longer holds promotion back
 
 - **Fixed: after any restart mid-enrolment, the face gate reported "face pattern not
