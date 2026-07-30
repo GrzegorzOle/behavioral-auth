@@ -328,14 +328,16 @@ apart.
   the SCM (that service run was in `debug`, i.e. in the interactive session, which does not
   answer the Session 0 question), promotion to MONITORING, and an alarm reaching the Event
   Log.
-- **The face channel can fail silently.** The Windows default config ships
-  `face.enabled: true`. On a box where the camera is present and healthy but unavailable to
-  OpenCV — another application holding it, or Windows camera privacy settings blocking
-  desktop apps — every frame grab fails, and **the daemon's own log says nothing about it**;
-  the only trace is OpenCV output on stderr, which a service discards. A face channel that
-  never sees a frame therefore looks exactly like one that works. If you rely on face
-  checks, confirm with `behavioral-face verify` rather than assuming. Set
-  `face.enabled: false` if you do not want the channel at all.
+- **The face channel needs a real local session, and fails silently without one.** The
+  Windows default config ships `face.enabled: true`. Over **RDP there is no webcam** unless
+  camera redirection is switched on, so every frame grab fails with an OpenCV MSMF error;
+  the same is true for a service in Session 0. At the physical console on the same machine
+  the camera works and the face model trains normally, so a failure here is about *where*
+  the daemon runs, not about the camera being broken.
+  The defect is the silence: **the daemon's own log says nothing at all** — the only trace
+  is library output on stderr, which a service discards, so a face channel that never sees
+  a frame looks exactly like one that works. Confirm with `behavioral-face verify` rather
+  than assuming, and set `face.enabled: false` if you do not want the channel.
 - **Windows Session 0: a service captures nothing. Measured, not assumed.** A Windows
   service runs as `LocalSystem` in the isolated *Session 0* while you work in a separate
   interactive session, and a low-level input hook installed there **does not receive your
@@ -348,9 +350,16 @@ apart.
   background rate with no input-driven component. Mouse movement alone emits hundreds of
   events per second, so real capture would have been megabytes.
   **The working setup is to run `behavioral-authd.exe` in your own logged-in session** —
-  a per-user *Task Scheduler* task "at log on" — which was confirmed capturing on the same
-  box. The installer still registers and starts the service; until that changes, treat the
-  service as the thing that will not work and set up the scheduled task yourself.
+  a per-user *Task Scheduler* task "at log on". Measured the same way on the same box, at
+  the physical keyboard: **16 700 bytes/sec against the service's 144**, a hundredfold
+  difference that needs no interpretation. `behavioral-auth status` also works in this
+  shape, because the state file is then created by your own account rather than by
+  `LocalSystem`.
+  The installer still registers and starts the service; until that changes, stop and
+  disable it (`Stop-Service behavioral-auth`, `Set-Service behavioral-auth -StartupType
+  Disabled`) and set up the scheduled task yourself. Do not leave both running: DuckDB
+  takes an **exclusive** lock on the database, so the second daemon simply loses, without
+  an obvious message.
 - **The hardware binding does not exist on Windows.** `pynput` installs one global hook and
   cannot say which keyboard produced a keystroke, so the daemon cannot tell a docked setup
   from an undocked one there. The `SUSPENDED` state simply never fires on Windows — it is

@@ -392,9 +392,14 @@ Mouse movement alone emits hundreds of events per second, so genuine capture wou
 been megabytes, not a rate indistinguishable from idle.
 
 **So install it to run in your own logged-in session** — a per-user *Task Scheduler* task
-"at log on" is the shape that works, and the same executable captures correctly there
-(confirmed on the same box). The service is still installed and started by the installer
-for now; it will run, log, and learn nothing.
+"at log on" is the shape that works. Measured the same way at the physical keyboard on the
+same machine: **16 700 bytes/sec against the service's 144**, a hundredfold difference.
+`behavioral-auth status` works in this shape too, because the state file is then created
+by your own account rather than by `LocalSystem`.
+
+The installer still registers and starts the service; stop and disable it if you use the
+scheduled task, because DuckDB takes an **exclusive** lock and two daemons cannot share
+the database — the second one just loses.
 
 **The Windows service could not start at all before 0.5.6 — three defects in a row, each
 hiding the next.** Every one of them only ever showed up under the Service Control
