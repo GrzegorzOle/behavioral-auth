@@ -145,11 +145,19 @@ class LearningController:
 
         Scoped to *enrollment_id*, so `reset` still starts genuinely from zero —
         a new enrollment has no cycles to resume from.
+
+        Ordered by ``cycle_no``, which is what "the last cycle" actually means
+        here: it is monotonic by construction and unique within an enrollment.
+        ``ts_utc`` is neither — DuckDB's ``now()`` resolves to the millisecond,
+        so two cycles recorded in the same one tie and ``LIMIT 1`` then returns
+        either. A daemon spaces its cycles by ``cycle_min_sec`` and never sees
+        that, but the losing side of the tie is a resume one cycle behind: a
+        short streak, a stale ``prev_shape`` and a rewound high-water mark.
         """
         row = conn.execute(
             'SELECT cycle_no, stable_streak, n_train, n_holdout, metrics_json '
             'FROM learning_cycles WHERE enrollment_id = ? '
-            'ORDER BY ts_utc DESC LIMIT 1', [enrollment_id]).fetchone()
+            'ORDER BY cycle_no DESC LIMIT 1', [enrollment_id]).fetchone()
         if not row:
             return
 

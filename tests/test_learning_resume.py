@@ -77,6 +77,35 @@ def test_another_enrollments_history_is_not_inherited(cfg, conn):
     assert lc.seq_at_last_cycle == 0
 
 
+def test_the_last_cycle_means_the_highest_number_not_the_latest_clock(cfg, conn):
+    """The ordering key is cycle_no, and this is why it has to be.
+
+    Ordering by ts_utc looked equivalent and is not: DuckDB's now() resolves to
+    the millisecond, so two cycles written inside one tie and LIMIT 1 returns
+    either — the suite hit that tie for real. cycle_no is monotonic by
+    construction and unique within an enrollment, so it cannot tie at all.
+
+    Written with the clock disagreeing outright rather than merely tied, so the
+    assertion fails deterministically under the old key instead of whenever two
+    inserts happen to land in the same millisecond.
+    """
+    eid = '66666666-6666-6666-6666-666666666666'
+    for cycle_no, ts in ((1, '2026-07-30 12:00:00+00'), (2, '2026-07-30 11:00:00+00')):
+        conn.execute(
+            'INSERT INTO learning_cycles (ts_utc, enrollment_id, cycle_no, n_train, '
+            'n_holdout, stable, stable_streak, promoted, metrics_json) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [ts, eid, cycle_no, 300, 80, True, cycle_no, False,
+             json.dumps({'shape': float(cycle_no)})])
+
+    lc = LearningController(cfg)
+    lc.resume(conn, eid)
+
+    assert lc.cycle_no == 2
+    assert lc.stable_streak == 2
+    assert lc.prev_shape == 2.0
+
+
 def test_unreadable_metrics_do_not_break_the_resume(cfg, conn):
     eid = '55555555-5555-5555-5555-555555555555'
     conn.execute(
