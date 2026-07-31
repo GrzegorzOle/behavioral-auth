@@ -439,9 +439,18 @@ a different code path, and those paths worked.
 starts, stays `Running`, and logs no error events. Each defect only became visible once
 the one before it was out of the way.
 
-It stays a beta: an alarm has never been seen reaching the Event Log, promotion to
-MONITORING has not been reached on Windows, and the install shape the installer sets up
-(a service) is the one that cannot capture. `docs/USAGE.md` lists what to check.
+**It stays a beta, and for one reason that matters more than the rest: a pattern has never
+been promoted from real behaviour on Windows.** The whole state machine has been walked
+through to an alarm, but only in `dev` mode on synthetic input — which proves the
+plumbing, not that this machine can learn a usable pattern from a person. A real enrolment
+here cleared every volume gate (1600+ sequences, 400+ active minutes) and still failed the
+promotion sanity gate: the model reconstructs synthetic impostors nearly as well as the
+real thing, so it is not discriminating. That is the gate doing its job, and it is not a
+platform problem — it is the open question about the model.
+
+Two smaller reasons: the install shape the installer sets up (a service) is the one that
+cannot capture, and the Wazuh decoding path has never run on a real manager.
+`docs/USAGE.md` lists what to check.
 
 Two further Windows-specific limits worth knowing before you rely on it:
 
