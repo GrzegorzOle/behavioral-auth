@@ -362,19 +362,36 @@ Rather than a vague status, here is the actual split:
 
 | Confirmed | Not yet confirmed |
 |---|---|
-| The bundle builds and freezes on a Windows runner | An alarm reaching the Event Log |
-| `behavioral-auth.exe` and the report run | Promotion to MONITORING (stable cycles seen, a streak is needed) |
-| The installer compiles and produces a working `.exe` | The Wazuh agent decoding an Event Log alarm |
-| The OS-agnostic logic (keycode map, event shaping) is unit-tested | The face channel reading a frame — see Known limitations |
+| The bundle builds and freezes on a Windows runner | Promotion to MONITORING **on real behaviour** — see below |
+| `behavioral-auth.exe` and the report run | The Wazuh agent decoding an Event Log alarm |
+| The installer compiles and produces a working `.exe` | |
+| The OS-agnostic logic (keycode map, event shaping) is unit-tested | |
 | **The installer installs on a real box** — Program Files layout, an editable config in ProgramData, the machine-wide `BEHAVIORAL_AUTH_CONFIG`, the service registered auto-start | |
 | **Uninstall is clean** — the service deregisters and `C:\ProgramData\behavioral-auth\` survives, as intended | |
 | **The `pynput` hook captures real keyboard and mouse input** in a user session | |
 | **A full learning cycle completes** on Windows — training, scoring and the promotion sanity gate | |
 | **The service starts and runs under the SCM** — `Running`, no error events | |
 | **A Session 0 service captures nothing** — measured, see below | |
+| **The whole state machine runs**: LEARNING → promotion → MONITORING → ALARM | |
+| **Alarms reach the Windows Event Log** — right severity, full payload, empty spool | |
+| **The face channel trains** from a real webcam in a local session | |
 
-All of this was watched on a live Windows box on 2026-07-29/30; everything unmarked runs
+All of this was watched on a live Windows box on 2026-07-29/31; everything unmarked runs
 in CI on every release.
+
+**The Event Log path, in detail, because it is the one people ask about.** With
+`siem.enabled: true` the daemon writes event id **1000** under source `behavioral-auth` in
+the Application log. Severity maps as designed — lifecycle events are *Information*, an
+alarm is a *Warning*, never an Error, because an alarm is not a software fault. The
+payload arrives as two insertion strings: a readable `category.action` and the same JSON
+body the syslog sinks send, carrying verdict and numbers only — ratio, span, reason,
+face state, ids. No key codes, no coordinates, no feature vectors. The spool stayed empty
+throughout, so nothing was held back.
+
+One rough edge: Event Viewer renders the **message body as blank**, because no message
+resource is registered for the source. The data is all in `EventData`, which is what a
+Wazuh eventchannel collector reads, so forwarding is unaffected — but a human reading the
+log directly sees an empty description and has to look at the event's data tab.
 
 ### Run it in your own session, not as a service
 

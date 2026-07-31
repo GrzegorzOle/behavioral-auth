@@ -328,6 +328,16 @@ apart.
   the SCM (that service run was in `debug`, i.e. in the interactive session, which does not
   answer the Session 0 question), promotion to MONITORING, and an alarm reaching the Event
   Log.
+- **Alarms do reach the Windows Event Log — confirmed on hardware 2026-07-31.** With
+  `siem.enabled: true` the daemon writes event id **1000** under source `behavioral-auth`
+  in the Application log: lifecycle events as *Information*, an alarm as a *Warning*
+  (never an Error — an alarm is not a software fault). Read them back with
+  `Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='behavioral-auth'}`.
+  **Event Viewer will show a blank description**, because no message resource is
+  registered for the source; the payload is in the event's data, as two insertion strings
+  — a readable `category.action` and the JSON body. That is what a Wazuh eventchannel
+  collector reads, so forwarding is unaffected. To see it yourself, look at
+  `$_.Properties` rather than `$_.Message`.
 - **The face channel needs a real local session, and fails silently without one.** The
   Windows default config ships `face.enabled: true`. Over **RDP there is no webcam** unless
   camera redirection is switched on, so every frame grab fails with an OpenCV MSMF error;
