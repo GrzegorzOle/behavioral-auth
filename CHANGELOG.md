@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.9 — the report reads the config you hand it
+
+- **Fixed: `behavioral-report --config <path>` was accepted and then ignored.** The
+  command took no arguments at all and never looked at its command line, so the flag went
+  nowhere and the report was built from the *default* database instead. Nothing on screen
+  said so, which is the worst shape this failure could take — the numbers are real, they
+  simply belong to another machine's pattern. `behavioral-auth` and `behavioral-authd`
+  had both taken `--config` all along; the report was the one command that did not.
+- **An argument it does not understand is now an error rather than a shrug.** Silently
+  discarding the unrecognised is what produced the wrong report in the first place, and
+  the next unimplemented flag would have inherited exactly the same trap.
+- **Fixed: resuming the learning history could come back one cycle behind.** The last
+  recorded cycle was selected by timestamp, and DuckDB's clock resolves to the
+  millisecond — two cycles written inside one tie, and the query then returns either.
+  Cycles are selected by cycle number now, which cannot tie. A running daemon spaces its
+  cycles minutes apart and almost certainly never hit this, but the losing side of a tie
+  is a short streak, a stale error shape and a rewound sequence high-water mark — two of
+  which make promotion *easier*, the failure mode 0.5.8 existed to close.
+
 ## 0.5.8 — cycle history survives a restart
 
 - **Fixed: restarting the daemon threw away its learning-cycle history.** Promotion
