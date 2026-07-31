@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.5.10 — what the Windows hardware run actually established
+
+No code changes: the binaries are identical to 0.5.9. This release exists to carry the
+documentation, because what it now says about Windows is materially different from what
+it said before.
+
+- **Alarms reach the Windows Event Log — confirmed on hardware.** Event id 1000 under
+  source `behavioral-auth` in the Application log, lifecycle events as *Information* and
+  an alarm as a *Warning* (never an Error — an alarm is not a software fault). The
+  payload arrives as two insertion strings, a readable `category.action` and the JSON
+  body, carrying verdicts and numbers only: ratio, span, reason, face state, ids. No key
+  codes, no coordinates, no feature vectors, exactly as on the syslog path. The spool
+  stayed empty throughout, so nothing was held back.
+- **Documented rather than hidden:** Event Viewer renders the description as blank,
+  because no message resource is registered for the source. Everything is in the event's
+  data, which is what a Wazuh eventchannel collector reads — so forwarding is unaffected,
+  but a person reading the log directly needs `$_.Properties`, not `$_.Message`.
+- **Three rows move into Confirmed**: the full state machine `LEARNING → promotion →
+  MONITORING → ALARM`, alarms in the Event Log, and the face channel training from a real
+  webcam in a local session.
+- **The beta caveat now states the reason that matters.** Two of its claims had stopped
+  being true and were simply wrong. In their place: **a pattern has never been promoted
+  from real behaviour on Windows.** The walk to ALARM was `dev` mode on synthetic input,
+  which proves the plumbing and says nothing about learning a usable pattern from a
+  person. A real enrolment cleared every volume gate — 1600+ sequences, 400+ active
+  minutes — and still failed the promotion sanity gate, because the model reconstructs
+  synthetic impostors about as well as the real thing. That is the gate working as
+  designed, and it is a question about the model, not about Windows.
+
 ## 0.5.9 — the report reads the config you hand it
 
 - **Fixed: `behavioral-report --config <path>` was accepted and then ignored.** The
