@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.5.11 — the mouse features were wrong, and they were wrong everywhere
+
+**This corrects a claim made in 0.5.10.** That release said the failure to promote was
+"a question about the model, not about Windows". It was neither: the mouse feature
+extractor was computing the wrong quantities, and on this hardware most stored windows
+contained no features at all. Nothing about the autoencoder or the promotion gate needed
+changing — both behaved correctly on the data they were handed.
+
+- **The two pointer axes are separate event streams and were being zipped by position.**
+  Relative motion reports each axis as its own event and omits an axis that did not move,
+  so REL_X and REL_Y have different lengths. They are now regrouped into motion samples
+  by timestamp before anything is computed. When one axis was missing entirely the old
+  code gave up on the whole window.
+- **Movement values are deltas, and were being differenced a second time.** Speed was
+  therefore acceleration and the stored acceleration was jerk — off by seven orders of
+  magnitude on real data (median 1.3e+12 before, 7.3e+04 after). Distance covered by a
+  sample is now the delta itself.
+- **Scroll events are no longer read as cursor movement.** The wheel shares the
+  relative-event type, and was contributing timestamps with no axis to the speed series.
+- **A window whose extractors produced nothing is no longer stored as a row of zeros.**
+  This is the one that hid the rest: such a row is indistinguishable from "the user sat
+  perfectly still", and it was counted toward active minutes, trained on, and used to
+  build the synthetic impostors that guard promotion. On the affected machine 84 % of
+  stored windows were that. Because scaling a zero changes nothing, the impostors came
+  out identical to the real data and the promotion gate became impossible to satisfy —
+  which is exactly what it reported, for 247 consecutive cycles.
+- **On Windows, one movement now carries one timestamp.** Its two axes were being stamped
+  separately, microseconds apart; evdev gives both the time of the same event frame.
+- **None of this was specific to Windows.** evdev omits zero axes too and its values are
+  deltas as well. It went unseen because the only exercise of this path was `make demo`,
+  whose synthetic input moves both axes evenly and never starves one.
+- **The path had no test coverage at all.** It does now: `tests/test_mouse_features.py`
+  plus two window-retention tests, each verified to fail against the previous release.
+
+Also worth knowing for anyone diagnosing a stalled enrolment: a machine running an
+anti-idle utility ("mouse jiggler") feeds it cursor movement that is not yours. Nothing in
+this project yet detects that, and it remains the honest limitation to check first.
+
 ## 0.5.10 — what the Windows hardware run actually established
 
 No code changes: the binaries are identical to 0.5.9. This release exists to carry the
