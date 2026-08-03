@@ -114,3 +114,51 @@ def test_sequences_are_idempotent(conn, cfg):
     first = build_sequences(conn, sid, eid, cfg)
     assert first > 0
     assert build_sequences(conn, sid, eid, cfg) == 0
+
+
+def _mouse_clicks(conn, sid, t0_ns: int, n: int, step_ns: int = 200_000_000) -> None:
+    """Mouse button events only -- plenty of rows, no cursor movement at all."""
+    rows = []
+    for i in range(n):
+        ts = t0_ns + i * step_ns
+        rows.append((ts, datetime.fromtimestamp(ts / 1e9, tz=timezone.utc),
+                     sid, '/dev/m', 'mouse', 'mouse', 1, 272, i % 2))
+    conn.executemany(
+        'INSERT INTO raw_events (ts_ns, ts_utc, session_id, dev_path, dev_name, '
+        'dev_type, ev_type, ev_code, ev_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', rows)
+
+
+def test_unextractable_windows_are_not_stored_as_zeros(conn, cfg):
+    """Passing the event-count gate is not the same as having features.
+
+    These windows hold far more mouse rows than min_mouse_events, so the
+    retention check waves them through -- but there is no cursor motion, so the
+    mouse extractor returns None, and there are no keystrokes either. The old
+    code stored the row anyway with all 17 behavioural features at 0.0.
+
+    Those rows are indistinguishable from "the user sat perfectly still". They
+    were counted as active minutes, trained on, and used to build the synthetic
+    impostors that guard promotion -- and because scaling a zero changes
+    nothing, they made the promotion gate impossible to satisfy.
+    """
+    sid, eid = _session(conn, cfg)
+    t0 = 1_700_000_000 * SEC
+    _mouse_clicks(conn, sid, t0, n=300)      # 60s of clicking, no movement
+
+    inserted = build_feature_windows(conn, sid, eid, cfg)
+    assert inserted == 0, 'stored a window whose extractors both returned None'
+
+    stored = conn.execute('SELECT count(*) FROM feature_windows').fetchone()[0]
+    assert stored == 0
+
+
+def test_real_activity_is_still_stored(conn, cfg):
+    """The guard above must not throw away windows that do have features."""
+    sid, eid = _session(conn, cfg)
+    t0 = 1_700_000_000 * SEC
+    _type(conn, sid, t0, duration_sec=60)
+
+    assert build_feature_windows(conn, sid, eid, cfg) > 0
+    nonzero = conn.execute(
+        'SELECT count(*) FROM feature_windows WHERE f_ks_count > 0').fetchone()[0]
+    assert nonzero > 0

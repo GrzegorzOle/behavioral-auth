@@ -56,8 +56,11 @@ def count_sequences(conn, enrollment_id: str) -> int:
 def active_minutes(conn, enrollment_id: str, stride_sec: int) -> float:
     """Approximate minutes of *active* use captured for this enrollment.
 
-    Each retained window contributes one stride of new activity; idle windows
-    were never stored, so this is activity time rather than wall-clock time.
+    Each retained window contributes one stride of new activity, so this is
+    activity time rather than wall-clock time. That rests entirely on
+    build_feature_windows refusing to store a window whose extractors both
+    returned None: while it did store those, this number counted nights and
+    weekends nobody was present, and the volume gate passed on that evidence.
     """
     n = conn.execute(
         'SELECT count(*) FROM feature_windows WHERE enrollment_id = ?',

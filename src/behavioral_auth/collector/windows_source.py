@@ -109,9 +109,14 @@ async def run_windows_hook(writer, session_id: str) -> None:
     loop = asyncio.get_running_loop()
     shaper = _Shaper()
 
-    def emit(path, name, dev_type, triple) -> None:
+    def emit(path, name, dev_type, triple, ts_ns=None) -> None:
         ev_type, code, value = triple
-        ts_ns = time.time_ns()
+        # One physical event gets one timestamp. A move reports its two axes as
+        # two rows, and evdev would give both the timestamp of the same SYN
+        # frame; stamping them separately here put them microseconds apart and
+        # left the feature extractor unable to tell which two rows were one
+        # movement.
+        ts_ns = time.time_ns() if ts_ns is None else ts_ns
         ts_utc = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc)
         # One global hook, no per-device identity: pynput cannot say which
         # keyboard produced a keystroke. Every event therefore claims the same
@@ -126,8 +131,8 @@ async def run_windows_hook(writer, session_id: str) -> None:
     def _kbd(triple) -> None:
         emit(_KBD_PATH, 'windows-keyboard', 'keyboard', triple)
 
-    def _mouse(triple) -> None:
-        emit(_MOUSE_PATH, 'windows-mouse', 'mouse', triple)
+    def _mouse(triple, ts_ns=None) -> None:
+        emit(_MOUSE_PATH, 'windows-mouse', 'mouse', triple, ts_ns)
 
     def on_press(key) -> None:
         vk = _extract_vk(key)
@@ -140,8 +145,9 @@ async def run_windows_hook(writer, session_id: str) -> None:
             _kbd(shaper.key(vk, pressed=False))
 
     def on_move(x, y) -> None:
+        ts_ns = time.time_ns()      # one movement, one timestamp, both axes
         for triple in shaper.move(x, y):
-            _mouse(triple)
+            _mouse(triple, ts_ns)
 
     def on_click(x, y, button, pressed) -> None:
         _mouse(shaper.click(getattr(button, 'name', ''), pressed))

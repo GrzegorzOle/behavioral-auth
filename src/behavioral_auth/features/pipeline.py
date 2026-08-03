@@ -126,9 +126,22 @@ def build_feature_windows(conn, session_id: str, enrollment_id: str, cfg: Settin
             w += stride_ns          # straddles a hardware change; not a person
             continue
 
+        ks_feats = extract_keystroke_features(kb)
+        ms_feats = extract_mouse_features(sub)
+        # Passing the event-count check above is not the same as the extractors
+        # having something to say: a window can hold hundreds of mouse rows and
+        # still yield nothing extractable. Storing it anyway wrote a row of
+        # zeros that is indistinguishable from "the user sat still" — and those
+        # rows are counted as activity, trained on, and used to build the
+        # synthetic impostors that guard promotion. An absent window is honest;
+        # a zero-filled one is a lie the rest of the pipeline believes.
+        if ks_feats is None and ms_feats is None:
+            w += stride_ns
+            continue
+
         feats = {c: 0.0 for c in FEATURE_COLUMNS}
-        feats.update(extract_keystroke_features(kb) or {})
-        feats.update(extract_mouse_features(sub) or {})
+        feats.update(ks_feats or {})
+        feats.update(ms_feats or {})
         feats.update(extract_context_features(sub.ts_utc, len(sub), cfg.features.window_sec))
 
         cols = ['session_id', 'enrollment_id', 'window_start_ns', 'window_end_ns',
