@@ -201,3 +201,54 @@ Agent names on this network, since every manager-side query needs one:
 `GRZEGORZ-STN` is the Windows box, `grzegorz-legion` the Linux one, and the
 manager is `192.168.88.4`. The agent name alone tells you which decoder should
 have handled an event.
+
+### Handing off the last step
+
+Everything up to the manager is confirmed on real hardware: the daemon writes event 1000,
+the Windows agent's Application collector picks it up (`wazuh-logcollector.state` shows
+83 876 events and **0 drops**), and the manager is reachable. What has never happened is
+the manager *decoding* it.
+
+Whoever has manager access can close this in about a minute. Two routes:
+
+**Over SSH:**
+
+```bash
+# 1. Get a REAL line rather than a constructed one -- the agent's envelope is
+#    the whole question here.
+sudo sed -i 's|<logall_json>no</logall_json>|<logall_json>yes</logall_json>|' /var/ossec/etc/ossec.conf
+sudo systemctl restart wazuh-manager
+#    ... provoke or wait for one behavioral-auth event on the Windows box ...
+sudo grep -m1 behavioral-auth /var/ossec/logs/archives/archives.json
+
+# 2. Feed exactly that line to logtest.
+sudo /var/ossec/bin/wazuh-logtest
+
+# 3. Put logall_json back -- it is expensive on a busy manager.
+```
+
+**Over the API** (port 55000 is open from the Windows box):
+
+```bash
+TOKEN=$(curl -sk -u '<user>:<pass>' -X POST \
+  'https://192.168.88.4:55000/security/user/authenticate?raw=true')
+curl -sk -X PUT 'https://192.168.88.4:55000/logtest' \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"event":"<the raw line>","log_format":"syslog","location":"eventchannel"}'
+```
+
+What to read from the output, in order:
+
+1. **Which field holds our JSON body.** This is the only thing that cannot be settled off
+   the manager. If it is not `win.eventdata.data`, nothing in the decoder actually breaks
+   — the prematch keys on `providerName`, which is structural — but correct the comment in
+   `0911-*_decoders.xml` so the next person is not misled.
+2. `decoder: 'behavioral-auth-win'`.
+3. The `ba_*` fields split out: `ba_category`, `ba_action`, and for an alarm `ba_reason`,
+   `ba_ratio`, `ba_span_sec`.
+4. `Rule: 100231 (level 12)` for a behavioural alarm.
+
+**Do not install these files on a shared manager without asking.** They are additive — new
+files, an unused id range, a prematch narrow enough that it was tested not to fire on
+another provider's Application events — but it is still somebody else's production
+detection, and the `Security` channel alone carries 1.5 GB through it.
