@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.12 — the Windows Event Log path gets a Wazuh decoder, and it ships
+
+No change to the daemon: the binaries behave exactly as 0.5.11. What changes is that
+forwarding to a SIEM from Windows is now something you can actually set up.
+
+- **A decoder and ruleset for the Event Log path** (`packaging/wazuh/0911-*`). The syslog
+  pair could never serve Windows — there is no RFC 5424 frame there at all. The daemon
+  writes event id 1000 under provider `behavioral-auth` to the Application channel, and
+  the agent wraps the whole Windows event in Wazuh's own JSON envelope, so this is a second
+  decoder beside the first rather than an edit to it.
+- **Rules 100230–100247 mirror 100200–100217 with identical levels**, deliberately: same
+  events, same meanings, different transport. If they drifted, one incident would read as
+  two different severities depending on which operating system raised it. A test pins that
+  they stay equal.
+- **Both pairs are now attached to the release** as `behavioral-auth-wazuh.zip`. They are
+  manager-side configuration — installed on the SIEM, not on the machine running the
+  daemon — so they cannot ride inside the AppImage or the installer, and until now the only
+  way to get them was to clone the repository.
+- **`docs/USAGE.md` explains the Windows forwarding path properly**, in both languages:
+  how to install the decoder, how to confirm from the agent's own counters that the
+  Application channel is already being collected (usually it is, which means events are
+  reaching the manager and matching no rule — a silent drop in Wazuh), why Event Viewer
+  shows a blank description and what to read instead, and why not to narrow a collector
+  that somebody else's detection may depend on.
+- **The decoders' first test coverage.** Twelve tests run the prematch and every field
+  regex against payloads captured verbatim from a real Application log, in both escaped
+  and unescaped form. Invented samples were avoided on purpose: they would let a decoder
+  and its test drift together.
+
+Unchanged and still true: **neither pair has been verified against a real Wazuh manager.**
+`packaging/wazuh/README.md` carries the `wazuh-logtest` procedure that closes it, and says
+plainly not to install these on a shared manager without asking first.
+
 ## 0.5.11 — the mouse features were wrong, and they were wrong everywhere
 
 **This corrects a claim made in 0.5.10.** That release said the failure to promote was
