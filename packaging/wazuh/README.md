@@ -6,6 +6,18 @@ fields instead of as opaque text.
 Both files go on the **manager**, not on the agent. Decoding is manager-side; the
 agent only ships the line.
 
+**There are two pairs, one per transport, and they are not interchangeable:**
+
+| files | transport | agent side |
+|---|---|---|
+| `0910-*` | Linux: RFC 5424 → `/dev/log` → journald | journald collector |
+| `0911-*` | Windows: Event Log id 1000 → eventchannel | Application channel collector |
+
+Nothing about the syslog framing survives on Windows — there is no frame at all —
+so a single decoder cannot serve both. Rule ids are separate blocks
+(100200–100217 and 100230–100247) but **the levels are deliberately identical**,
+so the same incident reads the same whichever machine raised it.
+
 ## Why this is needed at all
 
 The daemon frames its events as **RFC 5424** with a JSON body, deliberately: a
@@ -99,4 +111,93 @@ Rules 100201 and 100202 are kept apart because the daemon keeps the face channel
 out of the behavioural verdict. Folding a camera verdict into a behavioural one
 was a real bug in this project once; do not merge them here either.
 
-Rule ids live in the user range (≥ 100000). Renumber if 100200–100212 is taken.
+Rule ids live in the user range (≥ 100000). Renumber if 100200–100217 (syslog)
+or 100230–100247 (Event Log) is taken — and renumber both together, so the two
+transports stay easy to read side by side.
+
+## Windows: the eventchannel path (`0911-*`)
+
+```bash
+sudo cp 0911-behavioral-auth-windows_decoders.xml /var/ossec/etc/decoders/
+sudo cp 0911-behavioral-auth-windows_rules.xml    /var/ossec/etc/rules/
+sudo systemctl restart wazuh-manager
+```
+
+**Nothing to install or change on the agent.** The stock Windows agent already
+collects the Application channel, and `EventLogSink` writes there. If the
+collector is present, the events are *already* arriving at the manager and being
+silently dropped for want of a rule — the same failure mode as journald on
+Linux, and the reason to confirm arrival before touching anything.
+
+**Do not narrow that collector** to `Provider[@Name='behavioral-auth']` to spare
+the manager volume. On a corporate box it is somebody else's agent doing
+somebody else's detection on a shared manager, and narrowing a channel it
+already collects would silently blind whatever else depends on it. If volume
+ever becomes a real problem, that is a manager-side conversation.
+
+### What the event looks like
+
+Captured from the Application log on real hardware:
+
+```xml
+<Provider Name='behavioral-auth'/>
+<EventID Qualifiers='0'>1000</EventID>
+<Channel>Application</Channel>
+<EventData>
+  <Data>alarm.raised</Data>
+  <Data>{"action":"raised","category":"alarm","detail":{...},"severity":1,...}</Data>
+</EventData>
+```
+
+Two **unnamed** `<Data>` elements: a readable `category.action`, then the JSON
+body — the same payload the syslog sinks send, carrying verdicts and numbers
+only. Because they are unnamed, Wazuh has no meaningful field names to give
+them, and our JSON ends up nested inside the agent's own JSON envelope. That is
+why `0911-*` extracts fields with regexes instead of handing the body to
+`JSON_Decoder` the way `0910-*` does: a nested, possibly escaped body is not
+something `JSON_Decoder` can be pointed at.
+
+Every regex tolerates an optional backslash before each quote, so it matches
+whether or not the manager delivers the payload escaped. Both forms were tested
+against three real captured payloads (an alarm, a promotion, and the transition
+into ALARM); all ten fields extract in both.
+
+### Confirming the field path — do this first
+
+**This is the one thing that cannot be settled without a manager**, and it is
+worth one minute before trusting any of it. Read the field names off a real
+event rather than from this file:
+
+1. Provoke an event on the Windows box. The cheapest is a lifecycle one — start
+   the daemon with `siem.enabled: true` and `sink: eventlog`. For an alarm, use a
+   scratch config with `--mode dev --synthetic-input user` and then
+   `behavioral-auth set-profile impostor`; `--synthetic-input` **replaces** the
+   input hook, so it captures nothing real and can run beside a live daemon.
+2. Confirm it reached the log, remembering that Event Viewer renders the
+   description blank (no message resource is registered for the source):
+
+   ```powershell
+   Get-WinEvent -LogName Application -FilterXPath "*[System[Provider[@Name='behavioral-auth']]]" -MaxEvents 1 |
+     ForEach-Object { $_.ToXml() }
+   ```
+
+   Use `.ToXml()` or `$_.Properties`, **never** `$_.Message`.
+3. On the manager, confirm arrival before writing rules — turn on `logall_json`
+   or read `archives.json`, and look for an event from the Windows agent.
+4. Paste that raw line into `/var/ossec/bin/wazuh-logtest` and read which field
+   holds the body. If it is not `win.eventdata.data`, the prematch in
+   `0911-*_decoders.xml` still works (it keys on `providerName`, which is
+   structural), but say so in a comment there so the next person is not misled.
+
+### Status
+
+**`0911-*` has never met a real manager.** Its XML is well-formed, its prematch
+and all ten field regexes were verified against real captured payloads in both
+escaped and unescaped form, and every event shape the code can emit hits a rule.
+That is where the evidence stops — exactly the same position `0910-*` is in.
+`wazuh-logtest` against a captured line is the check that closes it.
+
+Agent names on this network, since every manager-side query needs one:
+`GRZEGORZ-STN` is the Windows box, `grzegorz-legion` the Linux one, and the
+manager is `192.168.88.4`. The agent name alone tells you which decoder should
+have handled an event.

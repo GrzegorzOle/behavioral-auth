@@ -1,0 +1,134 @@
+<!--
+  behavioral-auth (Windows Event Log) -> Wazuh decoders.
+
+  Install on the MANAGER as
+  /var/ossec/etc/decoders/0911-behavioral-auth-windows_decoders.xml,
+  then restart wazuh-manager. Decoding happens manager-side, never on the agent.
+
+  This is a SECOND decoder, deliberately separate from 0910-*. That pair keys on
+  RFC 5424 syslog framing, and none of that framing exists here: on Windows the
+  daemon writes to the Event Log and the agent's eventchannel collector picks it
+  up, so the transport is completely different. Do not try to make one decoder
+  serve both.
+
+  What arrives here.
+  EventLogSink calls ReportEvent with two insertion strings, which land as two
+  UNNAMED <Data> elements. A real event, read off GRZEGORZ-STN:
+
+    <Provider Name='behavioral-auth'/>
+    <EventID Qualifiers='0'>1000</EventID>
+    <Channel>Application</Channel>
+    <EventData>
+      <Data>alarm.raised</Data>
+      <Data>{"action":"raised","category":"alarm","detail":{...},"severity":1,...}</Data>
+    </EventData>
+
+  Because the <Data> elements have no Name attribute, Wazuh cannot give them
+  meaningful field names — they arrive as one blob, and our JSON is nested
+  inside the agent's own JSON envelope. That is why this decoder does NOT use
+  JSON_Decoder the way 0910-* does: a nested, possibly backslash-escaped body is
+  not something JSON_Decoder can be pointed at. The regexes below pull the
+  handful of fields the rules actually need, and each tolerates an optional
+  backslash before every quote so that it matches whether or not the manager
+  hands us the payload escaped.
+
+  ANCHORS. The only things worth keying on are the provider name and the event
+  id; both are structural and neither depends on how the body is escaped.
+
+  ==> NOT YET VERIFIED AGAINST A REAL MANAGER. <==
+  The field name holding the payload (win.eventdata.data here) is the one thing
+  that must be read off the manager rather than trusted from documentation —
+  ours or anyone's. See README.md, section "Confirming the field path", which
+  gives the exact wazuh-logtest procedure and a real captured event to paste in.
+  Everything else in this file is derived from the event shown above, which was
+  captured from the Application log on real hardware.
+-->
+
+<decoder name="behavioral-auth-win">
+  <prematch type="pcre2">"providerName"\s*:\s*"behavioral-auth"</prematch>
+</decoder>
+
+<!--
+  category + action. These two drive almost every rule, and they are the pair
+  the human-readable first insertion string also carries ("alarm.raised"), so if
+  the regex below ever stops matching, that string is the fallback anchor.
+-->
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"category\\?"\s*:\s*\\?"([a-z_]+)\\?"</regex>
+  <order>ba_category</order>
+</decoder>
+
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"action\\?"\s*:\s*\\?"([a-z_]+)\\?"</regex>
+  <order>ba_action</order>
+</decoder>
+
+<!--
+  severity is the daemon's own syslog severity (1 = ALERT for an alarm, 4/5 for
+  the quieter operational events). Rule 100243 uses it to tell "a keyboard was
+  attached while the machine was under watch" from the routine case.
+-->
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"severity\\?"\s*:\s*(\d+)</regex>
+  <order>ba_severity</order>
+</decoder>
+
+<!--
+  detail.* — the fields the alarm and state rules read. Kept as separate child
+  decoders so that a payload missing any one of them still decodes the rest;
+  a single combined regex would fail as a unit.
+-->
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <!--
+    Not [a-z_]+ : an alarm's reason is a single token ("behavioral", "face")
+    but a state transition's is a sentence ("sustained anomaly (behavioral)").
+    Capturing up to the closing quote keeps rule 100231's ^behavioral$ exact
+    while letting 100240 print the whole sentence.
+  -->
+  <regex type="pcre2">\\?"reason\\?"\s*:\s*\\?"([^"\\]+)</regex>
+  <order>ba_reason</order>
+</decoder>
+
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"ratio\\?"\s*:\s*([\d.]+)</regex>
+  <order>ba_ratio</order>
+</decoder>
+
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"span_sec\\?"\s*:\s*([\d.]+)</regex>
+  <order>ba_span_sec</order>
+</decoder>
+
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"from_state\\?"\s*:\s*\\?"([A-Z_]+)\\?"</regex>
+  <order>ba_from_state</order>
+</decoder>
+
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"to_state\\?"\s*:\s*\\?"([A-Z_]+)\\?"</regex>
+  <order>ba_to_state</order>
+</decoder>
+
+<!--
+  stack_changed carries "known": false when the hardware is not what the pattern
+  was learned on. JSON booleans are unquoted, hence no quote handling here.
+-->
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"known\\?"\s*:\s*(true|false)</regex>
+  <order>ba_known</order>
+</decoder>
+
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"purge_data\\?"\s*:\s*(true|false)</regex>
+  <order>ba_purge_data</order>
+</decoder>

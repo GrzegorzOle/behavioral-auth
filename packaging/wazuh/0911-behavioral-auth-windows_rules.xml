@@ -1,0 +1,198 @@
+<!--
+  behavioral-auth (Windows Event Log) -> Wazuh rules.
+
+  Install on the MANAGER as
+  /var/ossec/etc/rules/0911-behavioral-auth-windows_rules.xml, then restart
+  wazuh-manager. Pairs with 0911-behavioral-auth-windows_decoders.xml.
+
+  Rule ids 100230-100247, a separate block from the syslog pair's 100200-100217.
+  Change them if that range is already taken on your manager.
+
+  THE LEVELS ARE DELIBERATELY IDENTICAL to 100200-100217. Same events, same
+  meanings, different transport. If these ever drift apart, the same incident
+  reads as two different severities depending on which operating system raised
+  it, and an analyst comparing two machines is comparing the tooling instead of
+  the behaviour. When you change a level in one file, change it in the other.
+
+    12  someone other than the enrolled person appears to be at the keyboard,
+        or the pattern that defines who that person is was destroyed
+     7  monitoring is knowingly blind (paused, the daemon stopped, or the
+        hardware is not what the pattern was learned on), and a keyboard
+        attached while the machine was under watch
+     5  the pattern was deliberately changed (learn-more)
+     3  routine lifecycle
+
+  Field names are prefixed ba_ because they are extracted by our own decoder
+  rather than by JSON_Decoder; the prefix keeps them from colliding with the
+  many fields Wazuh's own eventchannel decoder already sets on these events.
+-->
+
+<group name="behavioral_auth,windows,">
+
+  <!-- Base: matches every decoded event, alerts on none of them. -->
+  <rule id="100230" level="0">
+    <decoded_as>behavioral-auth-win</decoded_as>
+    <description>behavioral-auth event (Windows Event Log)</description>
+  </rule>
+
+  <!-- ── Alarms ─────────────────────────────────────────────────────────── -->
+
+  <rule id="100231" level="12">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^alarm$</field>
+    <field name="ba_action">^raised$</field>
+    <field name="ba_reason">^behavioral$</field>
+    <description>behavioral-auth: behaviour stopped matching the enrolled pattern ($(ba_ratio)x threshold for $(ba_span_sec)s)</description>
+    <group>authentication_failed,gdpr_IV_35.7.d,hipaa_164.312.b,pci_dss_10.2.4,</group>
+  </rule>
+
+  <!--
+    The face channel is deliberately NOT folded into the behavioural verdict in
+    the daemon, so it is not folded in here either. Reporting a camera verdict
+    as a behavioural one was a real bug once; do not merge these two.
+  -->
+  <rule id="100232" level="12">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^alarm$</field>
+    <field name="ba_action">^raised$</field>
+    <field name="ba_reason">^face$</field>
+    <description>behavioral-auth: the camera does not recognise the person at the keyboard</description>
+    <group>authentication_failed,gdpr_IV_35.7.d,</group>
+  </rule>
+
+  <rule id="100233" level="3">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^alarm$</field>
+    <field name="ba_action">^cleared$</field>
+    <description>behavioral-auth: the alarm cleared — behaviour matches the pattern again</description>
+  </rule>
+
+  <!-- ── Operational ────────────────────────────────────────────────────── -->
+
+  <!--
+    A pattern reset sits at 12 with the alarms on purpose: it is how someone
+    makes the system forget who the owner is, and it is exactly what an attacker
+    who understands the tool would do first. Whether the owner asked for it is a
+    question for the analyst, not for the rule.
+  -->
+  <rule id="100234" level="12">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^pattern_reset$</field>
+    <description>behavioral-auth: the enrolled pattern was DESTROYED — the system no longer knows who the owner is (purge_data=$(ba_purge_data))</description>
+    <group>gdpr_IV_35.7.d,</group>
+  </rule>
+
+  <rule id="100235" level="5">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^learn_more$</field>
+    <description>behavioral-auth: the enrolled pattern is being retrained (learn-more)</description>
+  </rule>
+
+  <rule id="100236" level="7">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^paused$</field>
+    <description>behavioral-auth: scoring paused — nobody is being checked while this lasts</description>
+  </rule>
+
+  <rule id="100237" level="3">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^resumed$</field>
+    <description>behavioral-auth: scoring resumed</description>
+  </rule>
+
+  <rule id="100238" level="7">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^daemon_stopped$</field>
+    <description>behavioral-auth: the daemon stopped — the machine is no longer watched</description>
+  </rule>
+
+  <rule id="100239" level="3">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^daemon_started$</field>
+    <description>behavioral-auth: daemon started</description>
+  </rule>
+
+  <!-- ── Hardware ───────────────────────────────────────────────────────── -->
+
+  <!--
+    On Windows the stack gate is inert by construction: pynput is one global
+    hook with no per-device identity, so every event claims the same stack and
+    these three rules will not fire from a Windows agent today. They are kept so
+    that the two rulesets stay symmetrical, and so that they already exist if
+    RawInput (WM_INPUT) ever gives the port real device identity.
+  -->
+  <rule id="100243" level="7">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^input_device_added$</field>
+    <field name="ba_severity">^4$</field>
+    <description>behavioral-auth: an input device was attached while the machine was being watched</description>
+  </rule>
+
+  <rule id="100244" level="3">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^input_device_added$</field>
+    <description>behavioral-auth: an input device was attached</description>
+  </rule>
+
+  <rule id="100245" level="5">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^input_device_removed$</field>
+    <description>behavioral-auth: an input device stopped being readable</description>
+  </rule>
+
+  <rule id="100246" level="7">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^stack_changed$</field>
+    <field name="ba_known">^false$</field>
+    <description>behavioral-auth: unenrolled hardware — scoring suspended, nobody is being checked</description>
+  </rule>
+
+  <rule id="100247" level="3">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^stack_changed$</field>
+    <description>behavioral-auth: enrolled hardware returned — scoring resumed</description>
+  </rule>
+
+  <!-- ── State transitions ──────────────────────────────────────────────── -->
+
+  <!--
+    The transition into ALARM stays at 3, not 12. The alarm itself is already
+    reported at 12 by 100231/100232 and arrives in the same instant; raising the
+    transition too would double every incident.
+  -->
+  <rule id="100240" level="3">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^state$</field>
+    <field name="ba_action">^transition$</field>
+    <field name="ba_to_state">^ALARM$</field>
+    <description>behavioral-auth: state ALARM ($(ba_reason))</description>
+  </rule>
+
+  <rule id="100241" level="3">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^state$</field>
+    <field name="ba_action">^transition$</field>
+    <field name="ba_from_state">^LEARNING$</field>
+    <field name="ba_to_state">^MONITORING$</field>
+    <description>behavioral-auth: pattern promoted and frozen — monitoring has begun</description>
+  </rule>
+
+  <rule id="100242" level="3">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^state$</field>
+    <field name="ba_action">^transition$</field>
+    <description>behavioral-auth: state $(ba_from_state) -> $(ba_to_state)</description>
+  </rule>
+
+</group>
