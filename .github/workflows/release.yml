@@ -25,7 +25,7 @@ jobs:
       # against FUSE 2; ubuntu-22.04 runners ship neither. Without these the
       # "Build AppImage" step fails even with APPIMAGE_EXTRACT_AND_RUN.
       - name: Install AppImage build deps
-        run: sudo apt-get update && sudo apt-get install -y libfuse2 squashfs-tools
+        run: sudo apt-get update && sudo apt-get install -y libfuse2 squashfs-tools zip
 
       - uses: actions/setup-python@v7
         with:
@@ -73,6 +73,19 @@ jobs:
           path: dist/behavioral-auth-x86_64.AppImage
           if-no-files-found: error
 
+      # The Wazuh decoders and rules are manager-side configuration: they are
+      # installed on the SIEM, not on the machine running the daemon, so they
+      # cannot ride inside the AppImage or the installer. Without this they were
+      # reachable only by cloning the repo, which is a poor ask of whoever
+      # administers the manager. Built here rather than in the windows job so the
+      # archive is produced exactly once, and it carries both transports' pairs
+      # (0910-* syslog, 0911-* Event Log) plus the README that explains which is
+      # which and how to verify them.
+      - name: Package the Wazuh decoders and rules
+        run: |
+          zip -j dist/behavioral-auth-wazuh.zip packaging/wazuh/*.xml packaging/wazuh/README.md
+          unzip -l dist/behavioral-auth-wazuh.zip
+
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
@@ -84,6 +97,7 @@ jobs:
           files: |
             dist/behavioral-auth-x86_64.AppImage
             docs/USAGE.md
+            dist/behavioral-auth-wazuh.zip
 
   # The Windows one-folder bundle wrapped into an Inno Setup installer. Mirrors
   # the AppImage job on a windows runner. Not verified against a real desktop

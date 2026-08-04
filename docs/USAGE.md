@@ -137,6 +137,47 @@ With `siem.enabled: true` and `siem.sink: eventlog`, alarms, state changes and o
 source). What is forwarded is *verdicts and numbers only* — never your keystrokes, mouse
 coordinates or face crops.
 
+Event Viewer will show the description as **blank**, because no message resource DLL is
+registered for the source. Nothing is lost — the payload is in the event's data, which is
+also what a SIEM collector reads. To see it yourself use `.ToXml()` or `$_.Properties`,
+never `$_.Message`:
+
+```powershell
+Get-WinEvent -LogName Application -FilterXPath "*[System[Provider[@Name='behavioral-auth']]]" -MaxEvents 1 |
+  ForEach-Object { $_.ToXml() }
+```
+
+**Forwarding on to Wazuh.** A decoder and ruleset for this path ship in
+`packaging/wazuh/` (`0911-*`), and are attached to each release as
+`behavioral-auth-wazuh.zip`. They go on the **manager**, not the agent:
+
+```bash
+sudo cp 0911-behavioral-auth-windows_decoders.xml /var/ossec/etc/decoders/
+sudo cp 0911-behavioral-auth-windows_rules.xml    /var/ossec/etc/rules/
+sudo systemctl restart wazuh-manager
+```
+
+Usually **nothing needs changing on the agent**: a stock Windows agent already collects the
+Application channel, which means your events are most likely reaching the manager already
+and simply matching no rule — in Wazuh that is a silent drop, with no alert and no archive.
+Confirm collection before touching anything, by reading the agent's own counters:
+
+```powershell
+Get-Content 'C:\Program Files (x86)\ossec-agent\wazuh-logcollector.state'
+# look for  "location": "Application"  with a rising event count and drops 0
+```
+
+Do **not** narrow that collector to our provider to save volume. On a managed machine it is
+usually somebody else's agent feeding somebody else's detection, and narrowing a channel it
+already collects would silently blind whatever depends on it.
+
+The Linux (syslog) path has its own pair, `0910-*`, with different rule ids but
+**deliberately identical alert levels**, so one incident does not read as two severities
+depending on which operating system raised it. Both pairs, the install steps and the
+`wazuh-logtest` procedure for confirming them are documented in
+`packaging/wazuh/README.md`. Neither has been verified against a real manager yet — see
+*Known limitations* below.
+
 ### 6. Uninstall
 
 Use *Apps & features* (or the uninstaller). It stops and removes the service, then deletes
@@ -514,6 +555,46 @@ learn-more, start/stop) trafiają do logu **Application** pod źródłem `behavi
 Sprawdzisz je w **Podglądzie zdarzeń → Dzienniki Windows → Aplikacja** (filtruj po źródle).
 Przesyłane są *tylko werdykty i liczby* — nigdy Twoje naciśnięcia klawiszy, współrzędne
 myszy ani kadry twarzy.
+
+Podgląd zdarzeń pokaże opis jako **pusty**, bo dla tego źródła nie jest zarejestrowana
+biblioteka z komunikatami. Nic nie ginie — dane są w sekcji danych zdarzenia i to właśnie
+je czyta kolektor SIEM. Żeby je zobaczyć, użyj `.ToXml()` albo `$_.Properties`, nigdy
+`$_.Message`:
+
+```powershell
+Get-WinEvent -LogName Application -FilterXPath "*[System[Provider[@Name='behavioral-auth']]]" -MaxEvents 1 |
+  ForEach-Object { $_.ToXml() }
+```
+
+**Przekazywanie dalej do Wazuha.** Dekoder i reguły dla tej ścieżki są w
+`packaging/wazuh/` (`0911-*`) i dołączane do każdego wydania jako
+`behavioral-auth-wazuh.zip`. Instaluje się je na **managerze**, nie na agencie:
+
+```bash
+sudo cp 0911-behavioral-auth-windows_decoders.xml /var/ossec/etc/decoders/
+sudo cp 0911-behavioral-auth-windows_rules.xml    /var/ossec/etc/rules/
+sudo systemctl restart wazuh-manager
+```
+
+Zwykle **po stronie agenta nie trzeba nic zmieniać**: standardowy agent Windows i tak zbiera
+kanał Application, co oznacza, że Twoje zdarzenia najprawdopodobniej już docierają do
+managera i po prostu nie pasują do żadnej reguły — w Wazuhu to ciche odrzucenie, bez alertu
+i bez archiwum. Zanim cokolwiek ruszysz, potwierdź zbieranie licznikami samego agenta:
+
+```powershell
+Get-Content 'C:\Program Files (x86)\ossec-agent\wazuh-logcollector.state'
+# szukaj  "location": "Application"  z rosnącą liczbą zdarzeń i drops 0
+```
+
+**Nie** zawężaj tego kolektora do naszego dostawcy dla oszczędności. Na maszynie firmowej to
+zwykle cudzy agent zasilający cudzą detekcję, a zawężenie kanału, który już zbiera,
+oślepiłoby po cichu wszystko, co od niego zależy.
+
+Ścieżka linuksowa (syslog) ma własną parę `0910-*`, z innymi identyfikatorami reguł, ale
+**celowo identycznymi poziomami alertów** — żeby ten sam incydent nie czytał się jako dwie
+różne wagi zależnie od systemu, który go zgłosił. Obie pary, kroki instalacji i procedurę
+`wazuh-logtest` opisuje `packaging/wazuh/README.md`. Żadna nie została jeszcze sprawdzona
+na prawdziwym managerze — patrz *Znane ograniczenia* niżej.
 
 ### 6. Deinstalacja
 
