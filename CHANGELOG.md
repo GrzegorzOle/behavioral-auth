@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — it knows its own version, and it counts synthetic input
+## 0.5.13 — it knows what it is, what it is looking at, and when it stops looking
 
 Four things, all asked for in one session and all pointing the same way — the daemon should
 be able to say what it is, what it is looking at, and when it stops looking.
