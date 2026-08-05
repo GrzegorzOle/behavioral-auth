@@ -326,6 +326,60 @@ apart.
 
 ---
 
+## Updates — a notice, never a download
+
+**Nothing here updates itself.** Switched on, the daemon asks once a day whether a newer
+release exists and tells you; it never fetches it and never starts an installer. That is
+deliberate: this program reads every keystroke on the machine and starts at logon, so a
+channel able to pull new code and run it here would be the most valuable thing on the box
+to subvert. Installing an upgrade is a human act.
+
+Off by default. To switch the daily check on, in your config:
+
+```yaml
+updates:
+  check_enabled: true
+  url: "https://api.github.com/repos/GrzegorzOle/behavioral-auth/releases/latest"
+  interval_hours: 24
+  timeout_sec: 5.0
+```
+
+To ask once, right now, without enabling anything:
+
+```
+behavioral-auth check-update
+```
+
+That command works regardless of `check_enabled` — the setting governs the *unattended*
+check, and typing this is itself the decision. The answer also appears as a line in
+`behavioral-auth status` and a section in `behavioral-report`; both read a cache file next
+to `state.json` and never touch the network themselves.
+
+What goes out: one HTTPS GET, a constant `User-Agent: behavioral-auth` carrying **no
+version number**, no query string, no token. The reply is read for the release tag and the
+release page URL; everything else, including the download links, is dropped. The URL must
+be `https` — over plain http anyone on the path could answer *you are up to date* and
+suppress a security fix. Point it at an internal mirror if you have one.
+
+Which version you are on: `behavioral-auth --version` (all four executables take it), and
+the daemon writes it as the first line of its log.
+
+**On Windows, read this before upgrading.** The installer runs `--startup auto install`
+and `start`, so **every upgrade brings the Windows service back** — Automatic and Running.
+That service runs in Session 0, captures nothing, and takes DuckDB's exclusive lock away
+from the session daemon that does. After installing, stop it and set it back to Disabled:
+
+```powershell
+Stop-Service behavioral-auth
+Set-Service  behavioral-auth -StartupType Disabled
+```
+
+**Prefer your organisation's policy?** Then leave all of the above off and package the
+release for winget, Chocolatey or your Linux repository — the update decision then sits
+where every other piece of software on the machine already has it.
+
+---
+
 ## Known limitations & what to verify
 
 - **The Windows service could not start at all, before 0.5.4.** The SCM launches the
@@ -740,6 +794,62 @@ nadzoru. Pamiętaj: rosnąca mediana to dryf *albo* inna osoba, a system tego ni
 - **Szybki test:** ustaw `general.mode: dev` w configu, by zmniejszyć bramki i przejść
   `LEARNING → MONITORING` w minuty. Wzorzec promowany w `dev` to test poprawności, **nie**
   realna ochrona — na koniec wróć do `prod`.
+
+---
+
+## Aktualizacje — powiadomienie, nigdy pobieranie
+
+**Nic się tu nie aktualizuje samo.** Włączony, demon pyta raz na dobę, czy jest nowsze
+wydanie, i mówi Ci o tym; nigdy go nie pobiera i nie uruchamia instalatora. To decyzja, nie
+brak funkcji: ten program czyta każde naciśnięcie klawisza i startuje przy logowaniu, więc
+kanał zdolny ściągnąć nowy kod i go tu uruchomić byłby najcenniejszą rzeczą na tej maszynie
+do przejęcia. Instalacja aktualizacji pozostaje świadomym działaniem człowieka.
+
+Domyślnie wyłączone. Żeby włączyć codzienne sprawdzanie, w swoim configu:
+
+```yaml
+updates:
+  check_enabled: true
+  url: "https://api.github.com/repos/GrzegorzOle/behavioral-auth/releases/latest"
+  interval_hours: 24
+  timeout_sec: 5.0
+```
+
+Żeby zapytać raz, teraz, nic nie włączając:
+
+```
+behavioral-auth check-update
+```
+
+Ta komenda działa niezależnie od `check_enabled` — ustawienie rządzi sprawdzaniem
+**bezobsługowym**, a wpisanie komendy jest samo w sobie decyzją. Odpowiedź pojawia się też
+jako linia w `behavioral-auth status` i sekcja w `behavioral-report`; oba czytają plik
+podręczny obok `state.json` i same nigdy nie sięgają do sieci.
+
+Co wychodzi na zewnątrz: jedno zapytanie HTTPS GET, stały `User-Agent: behavioral-auth`
+**bez numeru wersji**, bez query stringa, bez tokenu. Z odpowiedzi czytany jest tag wydania
+i adres strony wydania; cała reszta, łącznie z linkami do plików, jest odrzucana. Adres
+musi być `https` — po zwykłym http ktokolwiek po drodze mógłby odpowiedzieć *masz
+najnowszą* i po cichu zdusić informację o poprawce bezpieczeństwa. Możesz wskazać własne
+wewnętrzne lustro repozytorium.
+
+Jaką masz wersję: `behavioral-auth --version` (przyjmują to wszystkie cztery programy), a
+demon zapisuje ją jako pierwszą linię swojego logu.
+
+**Na Windowsie przeczytaj to przed aktualizacją.** Instalator wykonuje `--startup auto
+install` i `start`, więc **każda aktualizacja przywraca usługę Windows** — Automatic i
+Running. Ta usługa działa w sesji 0, nic nie przechwytuje, a odbiera wyłączną blokadę
+DuckDB demonowi sesyjnemu, który przechwytuje. Po instalacji zatrzymaj ją i ustaw z
+powrotem na Disabled:
+
+```powershell
+Stop-Service behavioral-auth
+Set-Service  behavioral-auth -StartupType Disabled
+```
+
+**Wolisz, żeby decydowała polityka firmy?** Zostaw wszystko powyższe wyłączone i spakuj
+wydanie dla winget, Chocolatey albo swojego repozytorium linuksowego — decyzja o
+aktualizacji trafi tam, gdzie już jest dla całego pozostałego oprogramowania.
 
 ---
 

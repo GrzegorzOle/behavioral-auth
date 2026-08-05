@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 import numpy as np
 from loguru import logger
 
+from behavioral_auth import updates
 from behavioral_auth.collector.device_detector import detect_devices
 from behavioral_auth.collector.source import SyntheticSource, run_evdev
 from behavioral_auth.collector.stack import describe, short_fp
@@ -70,6 +71,11 @@ class Daemon:
 
         self._cycle_task: asyncio.Task | None = None
         self._face_task: asyncio.Task | None = None
+        self._update_task: asyncio.Task | None = None
+        # Seeded from disk so a daemon that restarts often does not ask on every
+        # start. Reading it here is safe before the run dir exists — read_status
+        # answers None rather than raising.
+        self._update_status = updates.read_status(cfg.daemon.run_dir)
         self._last_scored_ns = -1
         self._last_face_check = 0.0
         self._last_face_sample = 0.0
@@ -225,6 +231,47 @@ class Daemon:
             except OSError as exc:
                 logger.warning(f'Could not open {path}: {exc}')
 
+    # ── update notice ─────────────────────────────────────────────────────
+
+    def _maybe_check_updates(self) -> None:
+        """Ask, at most once per interval, whether a newer release exists.
+
+        Notification only, and off unless the operator turned it on: this is the
+        only request the daemon makes besides SIEM forwarding, so the guard is
+        the first line rather than something buried inside the check. Nothing is
+        downloaded and nothing is executed — see behavioral_auth/updates.py.
+        """
+        if not self.cfg.updates.check_enabled:
+            return
+        if self._update_task and not self._update_task.done():
+            return
+        if not updates.due(self._update_status, self.cfg.updates.interval_hours):
+            return
+        self._update_task = asyncio.create_task(self._check_updates())
+
+    async def _check_updates(self) -> None:
+        """Run the blocking request off the loop thread.
+
+        Deliberately on the default executor rather than face_pool or
+        train_pool: those have one worker each, and a camera grab queueing
+        behind a network timeout would turn a convenience into a hole in the
+        face channel.
+        """
+        loop = asyncio.get_running_loop()
+        status = await loop.run_in_executor(None, updates.check, self.cfg)
+        self._update_status = status
+        updates.write_status(self.cfg.daemon.run_dir, status)
+
+        if status.error:
+            # A box with no route out is the normal case for this product, not
+            # something to warn about every day.
+            logger.debug(f'Update check failed: {status.error}')
+        elif status.update_available:
+            logger.info(
+                f'A newer release is available: {status.latest} '
+                f'(running {status.current}). Nothing was downloaded — '
+                f'installing it is a manual step.')
+
     def _install_signals(self) -> None:
         self._loop = asyncio.get_running_loop()
         if sys.platform == 'win32':
@@ -284,6 +331,7 @@ class Daemon:
         self.writer.flush()
         self._handle_control()
         self._rescan_devices()
+        self._maybe_check_updates()
 
         eid = self.store.enrollment_id
         build_feature_windows(self.conn, self.session_id, eid, self.cfg)

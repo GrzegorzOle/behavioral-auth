@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 
+from behavioral_auth import __version__
 from behavioral_auth.reporting.metrics import report
 
 
@@ -22,6 +23,8 @@ def main() -> None:
     p = argparse.ArgumentParser(
         prog='behavioral-report',
         description='Raport: czego nauczył się wzorzec i co ocenił.')
+    p.add_argument('--version', action='version',
+                   version=f'behavioral-report {__version__}')
     p.add_argument('--config', metavar='PATH',
                    help='plik konfiguracyjny (domyślnie: BEHAVIORAL_AUTH_CONFIG, '
                         '/etc/behavioral-auth/config.yaml, config/config.yaml)')

@@ -12,6 +12,7 @@ import argparse
 import os
 import sys
 
+from behavioral_auth import __version__, updates
 from behavioral_auth.config import load_settings
 from behavioral_auth.daemon import commands, control
 from behavioral_auth.daemon.console import BOLD, DIM, GREEN, RED, RESET, YELLOW, bar, sparkline
@@ -65,7 +66,8 @@ def cmd_status(cfg, args) -> int:
     print(f'  {dot} {BOLD}{label}{RESET}')
     if not running:
         print(f'  {YELLOW}demon nie działa{RESET} — poniżej ostatni znany stan')
-    print(f'  {DIM}wzorzec{RESET} {(snap.get("enrollment_id") or "—")[:8]}')
+    print(f'  {DIM}wzorzec{RESET} {(snap.get("enrollment_id") or "—")[:8]}   '
+          f'{DIM}wersja{RESET} {__version__}')
 
     if snap['state'] == State.LEARNING.value:
         print()
@@ -111,7 +113,47 @@ def cmd_status(cfg, args) -> int:
             print(f'  {RED}{BOLD}ALARM{RESET}  powód: {snap.get("alarm_reason")}  '
                   f'szczyt {snap.get("alarm_peak_ratio", 0):.2f}x')
             print(f'  {DIM}sesja NIE została zablokowana — ten system tylko ostrzega{RESET}')
+
+    # Read from disk, never fetched here: `status` must stay a local, instant,
+    # offline command. Whatever the daemon last found is what gets shown.
+    upd = updates.read_status(cfg.daemon.run_dir)
+    notice = updates.describe(upd)
+    if notice:
+        print()
+        print(f'  {YELLOW}{notice}{RESET}')
+        if upd.url:
+            print(f'  {DIM}{upd.url}{RESET}')
     print()
+    return 0
+
+
+def cmd_check_update(cfg, args) -> int:
+    """Ask now whether a newer release exists, and only say so.
+
+    Runs whatever `updates.check_enabled` says. That flag governs the *daemon's*
+    unattended check — the one that would otherwise reach the network with
+    nobody present — and typing this command is itself the decision it would
+    have made on your behalf.
+
+    Nothing is downloaded here. The upgrade is a file you fetch and run
+    yourself, which on Windows also means you are present to undo what the
+    installer does to the service afterwards.
+    """
+    status = updates.check(cfg)
+    updates.write_status(cfg.daemon.run_dir, status)
+
+    print(f'zainstalowana: {__version__}')
+    if status.error:
+        print(f'{YELLOW}nie udało się sprawdzić:{RESET} {status.error}')
+        return 1
+    print(f'najnowsza opublikowana: {status.latest}')
+    if not status.update_available:
+        print('Nie masz nic do zrobienia.')
+        return 0
+    if status.url:
+        print(f'  {status.url}')
+    print('Nic nie zostało pobrane ani uruchomione — instalacja jest ręczna, '
+          'celowo.')
     return 0
 
 
@@ -162,6 +204,7 @@ def main() -> None:
         prog='behavioral-auth',
         description='Sterowanie demonem uwierzytelniania behawioralnego.')
     p.add_argument('--config', metavar='PATH')
+    p.add_argument('--version', action='version', version=f'behavioral-auth {__version__}')
     sub = p.add_subparsers(dest='command', required=True)
 
     sub.add_parser('status', help='pokaż aktualny stan').set_defaults(fn=cmd_status)
@@ -177,6 +220,10 @@ def main() -> None:
     sub.add_parser('pause', help='wstrzymaj punktację').set_defaults(fn=cmd_pause)
     sub.add_parser('resume', help='wznów punktację').set_defaults(fn=cmd_resume)
     sub.add_parser('db', help='utwórz/zmigruj bazę').set_defaults(fn=cmd_db)
+    sub.add_parser('check-update',
+                   help='sprawdź, czy jest nowsza wersja (tylko informuje — '
+                        'nic nie pobiera ani nie instaluje)'
+                   ).set_defaults(fn=cmd_check_update)
 
     sp = sub.add_parser('set-profile',
                         help='podmień profil syntetyczny (tylko --synthetic-input)')

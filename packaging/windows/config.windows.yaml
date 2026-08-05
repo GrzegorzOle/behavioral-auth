@@ -129,3 +129,18 @@ siem:
   spool_path: "C:/ProgramData/behavioral-auth/siem-spool.jsonl"
   spool_max_events: 10000
   flush_interval_sec: 10
+
+# Checking whether a newer release exists. OFF unless you turn it on, and it only
+# ever TELLS you — nothing is downloaded and nothing is executed. See
+# config/config.yaml for the full reasoning; it holds here unchanged.
+#
+# One Windows-specific reason to keep the install manual: the installer runs
+# `--startup auto install` + `start`, so every upgrade brings back the Windows
+# service. That service runs in Session 0, captures nothing, and takes DuckDB's
+# exclusive lock away from the session daemon that does. Someone has to be there
+# to stop and disable it again afterwards.
+updates:
+  check_enabled: false
+  url: "https://api.github.com/repos/GrzegorzOle/behavioral-auth/releases/latest"
+  interval_hours: 24
+  timeout_sec: 5.0

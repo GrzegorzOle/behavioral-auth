@@ -141,3 +141,28 @@ siem:
   spool_path: "/var/lib/behavioral-auth/siem-spool.jsonl"
   spool_max_events: 10000
   flush_interval_sec: 10
+
+# Checking whether a newer release exists. OFF unless you turn it on, and it only
+# ever TELLS you: nothing is downloaded, no installer is started, no file is made
+# executable. With check_enabled false the daemon makes no request at all — this
+# and `siem` above are the only two things in the tree that can open a socket.
+#
+# Why it stops at telling you. This daemon reads every keystroke on the machine
+# and starts automatically. A channel that could fetch new code and run it here
+# is the single most valuable thing an attacker could subvert: one compromised
+# release account and every installation becomes a keylogger, with nobody
+# present. So the code to accept a binary is not disabled — it does not exist.
+# Installing an upgrade stays a deliberate human act.
+#
+# `behavioral-auth check-update` asks regardless of this flag. The flag governs
+# the daemon's unattended check; typing the command is itself the decision.
+updates:
+  check_enabled: false
+
+  # Must be https: over plain http anyone on the path can answer "you are up to
+  # date" and quietly suppress the notice. Repoint at an internal mirror if you
+  # have one — anything answering with a JSON object carrying "tag_name" works.
+  url: "https://api.github.com/repos/GrzegorzOle/behavioral-auth/releases/latest"
+
+  interval_hours: 24    # a failed check also waits the full interval
+  timeout_sec: 5.0

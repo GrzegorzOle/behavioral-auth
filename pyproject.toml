@@ -4,10 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "behavioral-auth"
-version = "0.5.12"
+# Read from behavioral_auth.__version__ instead of being repeated here. The
+# daemon has to know its own version at runtime to say anything useful about a
+# newer release, and two hand-maintained copies of a version number drift.
+dynamic = ["version"]
 description = "Local-only behavioral authentication for Linux"
 readme = "README.md"
 requires-python = ">=3.11"
+
+[tool.setuptools.dynamic]
+version = {attr = "behavioral_auth.__version__"}
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -9,6 +9,7 @@ import sys
 
 from loguru import logger
 
+from behavioral_auth import __version__
 from behavioral_auth.config import load_settings
 from behavioral_auth.daemon.daemon import Daemon
 
@@ -46,6 +47,8 @@ def main() -> None:
         description='Learns how you type and move, then watches for someone else. '
                     'Never locks the session — it only warns.',
     )
+    p.add_argument('--version', action='version',
+                   version=f'behavioral-authd {__version__}')
     p.add_argument('--config', metavar='PATH', help='config file (default: search)')
     p.add_argument('--mode', choices=['dev', 'prod'],
                    help='override general.mode. dev merges config.dev.yaml, which '
@@ -71,6 +74,11 @@ def main() -> None:
     daemon = Daemon(cfg, synthetic=args.synthetic_input,
                     synthetic_speed=args.synthetic_speed)
     setup_logging(cfg, daemon.console)
+    # First line in the log, before anything can fail. Half of this project's
+    # diagnosis has been reading a log and asking which build produced it —
+    # previously answerable only by matching line numbers in tracebacks.
+    logger.info(f'behavioral-auth {__version__} starting ({sys.platform}, '
+                f'mode={cfg.general.mode})')
 
     try:
         asyncio.run(daemon.run())

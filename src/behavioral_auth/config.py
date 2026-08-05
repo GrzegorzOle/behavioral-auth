@@ -243,6 +243,43 @@ class SiemCfg(BaseModel):
         return v
 
 
+class UpdatesCfg(BaseModel):
+    """Checking whether a newer release exists. Off by default.
+
+    While `check_enabled` is false the daemon makes no request at all — the same
+    promise SiemCfg carries, and the same reason for carrying it. The only other
+    way a request happens is `behavioral-auth check-update`, which asks
+    regardless: this flag governs the *unattended* check, and a person typing
+    that command has already made the decision it would otherwise make for them.
+
+    Notification only. Nothing in behavioral_auth/updates.py downloads an asset
+    or starts an installer, deliberately — see its module docstring.
+    """
+    check_enabled: bool = False
+    url: str = ('https://api.github.com/repos/GrzegorzOle/behavioral-auth/'
+                'releases/latest')
+    interval_hours: int = 24
+    timeout_sec: float = 5.0
+
+    @field_validator('url')
+    @classmethod
+    def _https_only(cls, v: str) -> str:
+        # The interesting attack on an update *notice* is not a forged new
+        # version, it is suppression: anyone on the path can answer "you are
+        # already on the latest" over plain http and the user never learns a
+        # security fix exists. An internal mirror can have TLS.
+        if not v.startswith('https://'):
+            raise ValueError(f'updates.url must be https, got {v!r}')
+        return v
+
+    @field_validator('interval_hours')
+    @classmethod
+    def _sane_interval(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f'updates.interval_hours must be at least 1, got {v}')
+        return v
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
     general: GeneralCfg
@@ -255,6 +292,7 @@ class Settings(BaseModel):
     alarm: AlarmCfg = AlarmCfg()
     face: FaceCfg = FaceCfg()
     siem: SiemCfg = SiemCfg()
+    updates: UpdatesCfg = UpdatesCfg()
 
 
 def _system_config_path() -> str:

@@ -10,10 +10,12 @@ labelled as such.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from datetime import datetime, timezone
 
+from behavioral_auth import __version__, updates
 from behavioral_auth.collector.stack import describe
 from behavioral_auth.config import load_settings
 from behavioral_auth.daemon.console import sparkline
@@ -86,6 +88,31 @@ def _print_age_and_drift(conn, enrollment_id: str) -> None:
             print('  Jeśli masz pewność, że to ty: "behavioral-auth learn-more" (nie reset).')
 
 
+def _print_update(cfg) -> None:
+    """Whatever the last check found, read from disk — this never asks anything.
+
+    Silent when the answer is "up to date" or when nobody has ever checked.
+    """
+    status = updates.read_status(cfg.daemon.run_dir)
+    notice = updates.describe(status)
+    if not notice:
+        return
+    print(f'\nAktualizacja:\n  {notice}')
+    if status.url:
+        print(f'  {status.url}')
+    print('  Nic nie jest pobierane ani uruchamiane automatycznie — ten demon '
+          'czyta każde\n  naciśnięcie klawisza, więc nie ma tu kanału, którym '
+          'dałoby się podstawić mu kod.')
+    if sys.platform == 'win32':
+        # Documented, and it has bitten twice: the installer runs
+        # `--startup auto install` + `start` on every upgrade, so a deliberately
+        # Disabled service comes back Automatic/Running, takes DuckDB's
+        # exclusive lock in Session 0 and captures nothing.
+        print('  Po instalacji zatrzymaj usługę Windows i ustaw ją z powrotem na '
+              'Disabled —\n  instalator włącza ją przy każdej aktualizacji, a w '
+              'sesji 0 nic nie zbiera.')
+
+
 def report() -> None:
     cfg = load_settings()
     conn = open_db(cfg)
@@ -102,8 +129,10 @@ def _print(conn, cfg) -> None:
     ).fetchone()
 
     print()
+    print(f'behavioral-auth {__version__}')
     if not enrollment:
         print('Brak wzorca. Uruchom: behavioral-authd')
+        _print_update(cfg)
         return
     eid, status, created = enrollment
     print(f'Wzorzec {str(eid)[:8]}…  status={status}  utworzony {created:%Y-%m-%d %H:%M}')
@@ -180,6 +209,8 @@ def _print(conn, cfg) -> None:
             span = f'{(ended - started).total_seconds():.0f}s' if ended else 'trwa'
             print(f'  {started:%Y-%m-%d %H:%M}  powód={reason}  szczyt={peak:.2f}x  '
                   f'czas={span}  ({n} wyników)')
+
+    _print_update(cfg)
 
     print('\nCzego tu NIE ma: wskaźników FAR/FRR. Nie da się ich policzyć — system '
           'widział\ndane tylko jednej osoby, więc nie ma z czym ich porównać.\n')

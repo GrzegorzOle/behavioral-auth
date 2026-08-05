@@ -21,6 +21,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # A tag that disagrees with behavioral_auth.__version__ ships a binary that
+      # misreports itself, and the update notice compares exactly that string: an
+      # installed 0.5.13 still claiming 0.5.12 would tell its user an upgrade is
+      # available, forever. Checked before anything is built, so a forgotten
+      # version bump costs seconds rather than two 420 MB builds.
+      - name: The tag must agree with behavioral_auth.__version__
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          src=$(sed -n "s/^__version__ = '\(.*\)'$/\1/p" src/behavioral_auth/__init__.py)
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=${tag}  __version__=${src}"
+          if [ "$tag" != "$src" ]; then
+            echo "::error::tag ${tag} != __version__ ${src} — bump src/behavioral_auth/__init__.py"
+            exit 1
+          fi
+
       # appimagetool needs mksquashfs, and the type-2 runtime it embeds links
       # against FUSE 2; ubuntu-22.04 runners ship neither. Without these the
       # "Build AppImage" step fails even with APPIMAGE_EXTRACT_AND_RUN.
@@ -135,6 +151,21 @@ jobs:
             echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
           else
             echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The same check the appimage job makes, repeated here because this job is
+      # the one that stamps the version onto the installer's filename and its
+      # Add/Remove Programs entry. Deps are installed above, so ask the package.
+      - name: The tag must agree with behavioral_auth.__version__
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          src=$(python -c "import behavioral_auth; print(behavioral_auth.__version__)")
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=${tag}  __version__=${src}"
+          if [ "$tag" != "$src" ]; then
+            echo "::error::tag ${tag} != __version__ ${src} — bump src/behavioral_auth/__init__.py"
+            exit 1
           fi
 
       # Inno Setup provides iscc; the runner does not ship it.

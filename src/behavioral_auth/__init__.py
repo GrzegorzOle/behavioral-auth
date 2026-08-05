@@ -14,6 +14,14 @@ Modules:
   face       – silent LBPH enrolment and verification
   reporting  – what was observed (no FAR/FRR: there is no impostor data)
   db         – DuckDB access and schema migrations
+  updates    – optional "a newer release exists" check (off by default)
 """
 
-__all__ = []
+# The single source of truth for the version. pyproject.toml reads this attribute
+# rather than carrying its own copy, so the two cannot drift; the release
+# workflow additionally asserts that the tag being built agrees with it, because
+# a binary that misreports its own version would tell every user that an upgrade
+# is available forever.
+__version__ = '0.5.12'
+
+__all__ = ['__version__']

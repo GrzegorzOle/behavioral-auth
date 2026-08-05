@@ -8,8 +8,11 @@ does is write a warning to the log, the console, and (optionally) a desktop
 notification. That is a deliberate design constraint, not an unfinished feature.
 
 Everything runs on your machine: DuckDB on disk, ONNX on the CPU, and no network
-unless you switch on SIEM forwarding yourself — see [What leaves the
-machine](#what-leaves-the-machine).
+unless you switch on SIEM forwarding or the update check yourself — see [What
+leaves the machine](#what-leaves-the-machine). Both are off in the shipped
+configuration, and **there is no auto-update**: the daemon can tell you a newer
+release exists, and that is the whole of it. [Why it stops
+there](#updates-are-a-notice-never-a-download).
 
 **Linux and Windows.** Every release ships a Windows installer and a Linux
 AppImage, both self-contained — see [Install](#install). Linux is the older and
@@ -109,10 +112,14 @@ as an access-control mechanism.
 
 ## What leaves the machine
 
-**By default: nothing.** With `siem.enabled: false` — which is the shipped setting
-— no code path in this tree opens a socket. The behaviour you record, the model
-trained on it and the photographs of your face stay in `/var/lib/behavioral-auth`
-and are read by nothing but this daemon.
+**By default: nothing.** With `siem.enabled: false` and `updates.check_enabled:
+false` — which are the shipped settings — no code path in this tree opens a
+socket. The behaviour you record, the model trained on it and the photographs of
+your face stay in `/var/lib/behavioral-auth` and are read by nothing but this
+daemon.
+
+Exactly two things can change that, and each takes a deliberate act: SIEM
+forwarding (below) and the [update notice](#updates-are-a-notice-never-a-download).
 
 You can turn on forwarding to a SIEM (local syslog, or straight to a Wazuh
 manager). If you do, this is the complete list of what is sent:
@@ -148,6 +155,50 @@ network without going through the local syslog — and even then the spool holds
 whatever could not be delivered. There is no configuration in which an event both
 survives a broken link and leaves no local trace; those two wishes contradict each
 other, and this daemon picks *not losing the event*.
+
+### Updates are a notice, never a download
+
+**There is no auto-update, and this is a decision rather than a missing feature.**
+Switched on, the daemon asks once a day whether a newer release exists and tells
+you. It does not fetch it, does not verify it, does not run an installer. The code
+to accept a binary is not disabled behind a flag — it is absent.
+
+The reason is what this program is. It reads every keystroke on the machine and
+starts by itself at logon. A channel that could pull new code and execute it here
+would be the most valuable thing on the box to subvert: compromise the release
+account once and every installation becomes a keylogger, with nobody present to
+notice. Weigh that against the convenience of not visiting a download page a few
+times a year.
+
+```yaml
+updates:
+  check_enabled: false     # shipped off; no request is made at all while it is
+  url: "https://api.github.com/repos/GrzegorzOle/behavioral-auth/releases/latest"
+  interval_hours: 24
+  timeout_sec: 5.0
+```
+
+What the request contains: nothing about you. One HTTPS GET, a constant
+`User-Agent: behavioral-auth` with **no version in it** — telling a third party
+which build of a security tool a given address runs is a disclosure, not a
+feature — and no query string, no token, no identifier. The answer is read for two
+strings, the release tag and the release page URL, and the rest is dropped. The
+URL must be `https`; over plain http anyone on the path could answer *you are up
+to date* and quietly suppress a security fix. Repoint it at an internal mirror if
+you have one: anything that answers with a JSON object carrying `tag_name` works.
+
+`behavioral-auth check-update` asks immediately, whatever `check_enabled` says.
+That flag governs the *unattended* check — the one that would reach the network
+with nobody around — and typing the command is itself the decision it would
+otherwise be making for you.
+
+Where the answer shows up: a line in `behavioral-auth status` and a section in
+`behavioral-report`, both read from a small cache file next to `state.json`.
+Neither command ever touches the network.
+
+If you would rather your organisation decided when this upgrades, do not enable
+any of it — package the release for winget, Chocolatey or your Linux repository
+and let the existing policy handle it, the same as any other software on the box.
 
 ---
 
@@ -267,8 +318,13 @@ rather not touch it.
 | `behavioral-auth learn-more` | Refine the existing pattern with more data. Explicit, never automatic. |
 | `behavioral-auth pause` / `resume` | Stop/start scoring (collection continues). |
 | `behavioral-auth set-profile user\|impostor` | Swap the synthetic person mid-run. Only does anything against a daemon started with `--synthetic-input`. |
+| `behavioral-auth check-update` | Ask whether a newer release exists. **Tells you; downloads nothing.** Works regardless of `updates.check_enabled`. |
 | `behavioral-report` | Learning cycles, scores, alarms, pattern age and week-by-week drift. No FAR/FRR — see above. |
 | `behavioral-face info` / `verify` | Inspect and test the face pattern the daemon built. |
+
+Every executable also takes `--version`, and the daemon writes its version as the
+first line of the log — which build produced a log file used to be answerable only
+by matching line numbers in tracebacks.
 
 The daemon holds DuckDB's single write lock for its whole life, so the CLI talks
 to it through a control spool rather than the database. When no daemon is
