@@ -28,7 +28,7 @@ from loguru import logger
 from behavioral_auth import updates
 from behavioral_auth.collector.device_detector import detect_devices
 from behavioral_auth.collector.source import SyntheticSource, run_evdev
-from behavioral_auth.collector.stack import describe, newly_seen, short_fp
+from behavioral_auth.collector.stack import describe, is_remote, newly_seen, short_fp
 from behavioral_auth.collector.writer import Writer
 from behavioral_auth.config import Settings
 from behavioral_auth.daemon import commands, control
@@ -630,14 +630,29 @@ class Daemon:
         self.monitor.reset()
         self._stack_suspended_on = key
         self.siem.emit(Category.OPS, 'stack_changed', severity=Severity.WARNING,
-                       stack_fp=short_fp(key or ''), known=False)
-        logger.warning(
-            f'Scoring suspended: this is not the hardware the pattern was learned on '
-            f'({describe(key or "")}). Nothing is being judged until the enrolled '
-            f'hardware returns. To make this stack part of the pattern, run '
-            f'"behavioral-auth learn-more" — but note that a pattern spanning two '
-            f'stacks is more permissive than one.'
-        )
+                       stack_fp=short_fp(key or ''), known=False,
+                       remote=is_remote(key or ''))
+        if is_remote(key or ''):
+            # Deliberately a different sentence. "This is not the hardware the
+            # pattern was learned on" is true but unhelpful here — the hardware
+            # has not changed at all, the link has — and learn-more is the wrong
+            # advice: folding a network-distorted transport into the pattern
+            # widens it against a distortion that varies with the link.
+            logger.warning(
+                f'Scoring suspended: this session is a {describe(key or "")}. The '
+                f'pattern was learned at the physical console, and RDP rewrites the '
+                f'keystroke timings the model reads — so there is nothing meaningful '
+                f'to compare against. Collection continues and this input is kept, '
+                f'but it is never trained on. Scoring resumes at the console.'
+            )
+        else:
+            logger.warning(
+                f'Scoring suspended: this is not the hardware the pattern was learned on '
+                f'({describe(key or "")}). Nothing is being judged until the enrolled '
+                f'hardware returns. To make this stack part of the pattern, run '
+                f'"behavioral-auth learn-more" — but note that a pattern spanning two '
+                f'stacks is more permissive than one.'
+            )
         self.store.transition(State.SUSPENDED, 'unenrolled hardware stack')
 
     def _resume_from_stack(self, key: str | None) -> None:

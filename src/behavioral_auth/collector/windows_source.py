@@ -40,7 +40,8 @@ from behavioral_auth.collector.keycodes import (
     REL_Y,
     vk_to_evdev,
 )
-from behavioral_auth.collector.stack import WINDOWS_DEVICE_ID
+from behavioral_auth.collector import transport as _transport
+from behavioral_auth.collector.stack import windows_device_id
 
 _KBD_PATH, _MOUSE_PATH = '/windows/keyboard', '/windows/mouse'
 _BUTTONS = {'left': BTN_LEFT, 'right': BTN_RIGHT, 'middle': BTN_MIDDLE}
@@ -184,6 +185,31 @@ class _Shaper:
         return (EV_REL, REL_WHEEL, 1 if dy > 0 else -1)
 
 
+class _TransportCache:
+    """The session transport, re-read at most once a second.
+
+    Re-read rather than resolved once: a session can be reconnected between the
+    console and RDP while this process runs, and the whole point is to notice.
+    Rate-limited because a moving mouse emits events at 125 Hz and this is a
+    syscall — at that rate an uncached lookup would be the most expensive thing
+    in the capture path, to answer a question that cannot change meaningfully
+    inside a second.
+    """
+
+    _TTL_SEC = 1.0
+
+    def __init__(self) -> None:
+        self._at = 0.0
+        self._id = windows_device_id(_transport.UNKNOWN)
+
+    def device_id(self) -> str:
+        now = time.monotonic()
+        if now - self._at >= self._TTL_SEC:
+            self._at = now
+            self._id = windows_device_id(_transport.current())
+        return self._id
+
+
 def _extract_vk(key) -> int | None:
     """The Windows virtual-key code behind a pynput key, or None.
 
@@ -209,6 +235,7 @@ async def run_windows_hook(writer, session_id: str,
     loop = asyncio.get_running_loop()
     shaper = _Shaper()
     stats = stats if stats is not None else InjectionStats()
+    transport = _TransportCache()
 
     def emit(path, name, dev_type, triple, ts_ns=None) -> None:
         ev_type, code, value = triple
@@ -219,12 +246,13 @@ async def run_windows_hook(writer, session_id: str,
         # movement.
         ts_ns = time.time_ns() if ts_ns is None else ts_ns
         ts_utc = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc)
-        # One global hook, no per-device identity: pynput cannot say which
-        # keyboard produced a keystroke. Every event therefore claims the same
-        # stack, which makes the stack gate inert on Windows rather than wrong.
-        # Reaching real device identity there means RawInput (WM_INPUT), which
-        # pynput does not expose.
-        row = (ts_ns, ts_utc, session_id, path, name, WINDOWS_DEVICE_ID, dev_type,
+        # Still no per-device identity: pynput cannot say which keyboard produced
+        # a keystroke, and reaching that means RawInput (WM_INPUT), which it does
+        # not expose. What the identity DOES carry is the session transport, so a
+        # window typed over RDP is a different stack from one typed at the
+        # console — which is exactly right, because it is the same person through
+        # a link that rewrites their timing.
+        row = (ts_ns, ts_utc, session_id, path, name, transport.device_id(), dev_type,
                int(ev_type), int(code), int(value))
         # Cross the thread boundary: only the loop thread touches the Writer.
         loop.call_soon_threadsafe(writer.add, row)

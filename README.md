@@ -76,6 +76,34 @@ stranger, not just more likely to nag you. If you enrol docked and then undock,
 the daemon suspends scoring and tells you; `learn-more` will fold the second setup
 in, and will warn you at that moment about exactly this cost.
 
+### Working over RDP does not poison the pattern
+
+RDP is not different hardware, it is a different **transport**. The signal this system reads
+is keystroke dwell and flight timing, and a remote session writes network latency and input
+batching straight into it — so behaviour captured over RDP is you *plus the link*, and the
+link varies minute to minute.
+
+On Windows the daemon detects the session transport and puts it into the hardware-stack key,
+which makes everything above apply to it unchanged:
+
+- **Nothing collected remotely is ever trained on.** Not the model, and not the promotion
+  gates either — a gate satisfied by data the model may not see would be satisfied on false
+  evidence. The rows are still kept, honestly tagged.
+- **Scoring suspends** while the session is remote, for the same reason it suspends after you
+  swap keyboards: the pattern was learned at the console, so the comparison is *meaningless*,
+  not suspicious. Scoring an RDP session against a console pattern would alarm at the
+  legitimate owner every time they worked remotely, which is the fastest way to teach someone
+  to ignore alarms.
+- **The SIEM hears about the gap**, at the same level as any other unwatched window.
+
+`learn-more` is deliberately *not* offered as the fix here, unlike a genuine hardware change:
+folding a transport into the pattern widens it against a distortion that changes with the
+network.
+
+Detection uses the live session APIs, never `%SESSIONNAME%` — that variable is a snapshot
+taken when a process starts and survives a session being reconnected between console and RDP,
+so a guard built on it would eventually permit the very thing it exists to stop.
+
 ### It notices when input is being synthesised — on Windows, and only half of it
 
 A behavioural biometric enrols whatever moves the cursor. Point an anti-idle jiggler or a

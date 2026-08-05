@@ -11,6 +11,39 @@ than software. A SIEM signal for the enrolment's hardware set changing, which wa
 exactly where it mattered most. And the two things that were being worked around by hand
 daily: no way to stop the daemon cleanly, and a `--config` that ignored what you told it.
 
+### RDP no longer poisons the pattern
+
+Nothing in the product defended against this, and it had already cost one enrolment. RDP is
+not different hardware, it is a different transport: the same person with the link's latency
+and batching written into the keystroke timings the model reads.
+
+- **The session transport goes into the hardware-stack key** — `win:global` becomes
+  `win:console` or `win:rdp`. That one change makes the whole mechanism already built for
+  docks apply: a console pattern does not accept RDP windows, so scoring suspends, `status`
+  explains why, and `stack_changed` reaches the SIEM at level 7.
+- **Remote sequences are excluded from training and from every promotion gate**, counters
+  included. A volume gate satisfied by data the model is not allowed to see would be
+  satisfied on false evidence — the same defect as the inflated `active_minutes` that let an
+  all-zero-window enrolment sail through its gates.
+- **Suspension, not scoring.** Scoring RDP input against a console pattern would alarm at the
+  legitimate owner every time they worked remotely. That is the failure the `SUSPENDED` state
+  exists for: the comparison is meaningless, not suspicious. `learn-more` is deliberately not
+  suggested here, unlike a real hardware change.
+- **Detection uses `GetSystemMetrics(SM_REMOTESESSION)` and `WTSClientProtocolType`, and
+  either saying "remote" is enough.** The asymmetry is deliberate: erring toward remote costs
+  a gap in coverage, erring toward console silently poisons a pattern. Never
+  `%SESSIONNAME%` — measured on this box, a shell created during an RDP session still
+  reported `RDP-Tcp#0` while sitting on the console, and the mirror case would *permit*
+  collection over RDP.
+- **The upgrade path is the risky part and is handled explicitly.** `win:global` survives as
+  a legacy marker meaning "that build could not tell", and is a wildcard in both directions —
+  otherwise installing this would make an existing enrolment look like foreign hardware and
+  suspend scoring on the owner's own machine. It is subsumed rather than merely matched, so
+  an enrolment that continues across the upgrade stays **one** stack instead of becoming a
+  wider, more permissive two. It cannot grant more reach than the old build already had, and
+  it disappears at the first fresh enrolment. Four tests cover exactly this.
+- 18 new tests (235 → 253).
+
 ### `behavioral-auth stop`, and `--config` stops lying
 
 - **There was no way to stop a session daemon.** `pause` stops scoring, not collection, so

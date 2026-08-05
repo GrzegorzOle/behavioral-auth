@@ -31,10 +31,60 @@ from collections.abc import Iterable
 #: Stands in for a modality that produced no events in the window.
 ABSENT = '-'
 
-#: What the Windows backend reports. pynput exposes a single global hook with no
-#: device identity at all, so every event on Windows claims the same stack. The
-#: gate is therefore inert there — see the note in the daemon.
+#: What the Windows backend reported before transports were distinguished.
+#: pynput exposes a single global hook with no device identity, so every event
+#: claimed one stack and the gate was inert. Rows and patterns written by those
+#: builds still carry it, so it survives as a **legacy marker meaning "this build
+#: could not tell"** — see :func:`_is_legacy`.
 WINDOWS_DEVICE_ID = 'win:global'
+
+#: Windows still has no per-device identity (that needs RawInput / WM_INPUT), but
+#: it can say whether the session is at the physical console or delivered over
+#: the network. RDP is not different hardware, it is a different transport, and
+#: behaviour captured through it is the owner plus the link — see
+#: collector/transport.py. Putting the transport in the stack key is what makes
+#: the machinery already built here apply to it: a pattern learned at the console
+#: simply does not accept RDP windows, so scoring suspends and says why instead
+#: of inventing a verdict, and the SIEM hears about the gap.
+WINDOWS_CONSOLE_ID = 'win:console'
+WINDOWS_REMOTE_ID = 'win:rdp'
+
+#: Halves that say the input arrived over a remote display protocol. Sequences
+#: carrying one are never trained on: that is the whole point.
+REMOTE_IDS = frozenset({WINDOWS_REMOTE_ID})
+
+
+def windows_device_id(transport: str) -> str:
+    """The device identity a Windows event claims, given its session transport."""
+    from behavioral_auth.collector import transport as _t
+    if transport == _t.CONSOLE:
+        return WINDOWS_CONSOLE_ID
+    if transport == _t.REMOTE:
+        return WINDOWS_REMOTE_ID
+    return WINDOWS_DEVICE_ID
+
+
+def is_remote(key: str) -> bool:
+    """Did either half of this stack arrive over a remote display protocol?"""
+    return any(half in REMOTE_IDS for half in split_key(key))
+
+
+def _is_legacy(half: str | None) -> bool:
+    """Was this half written by a build that could not tell what it was?
+
+    `win:global` carries no information at all, which is a different thing from
+    ABSENT (`-`), and it needs the opposite treatment. ABSENT is deliberately not
+    a wildcard on the *enrolled* side, or a pattern learned from device-less rows
+    would accept everything. `win:global` has to be a wildcard in **both**
+    directions, because every row and every pattern written before this change
+    carries it: without that, upgrading would make an existing enrolment look
+    like a second hardware stack and suspend scoring on the owner's own machine.
+
+    It cannot make anything more permissive than it already was — a pattern made
+    entirely of `win:global` accepted everything before this change too — and it
+    disappears from a machine as soon as one fresh enrolment is made.
+    """
+    return half == WINDOWS_DEVICE_ID
 
 
 def device_id(vendor: int, product: int) -> str:
@@ -67,9 +117,11 @@ def key_matches(key: str, enrolled: Iterable[str]) -> bool:
         return True                       # an empty window; nothing to disagree with
     for other in enrolled:
         e_kbd, e_mouse = split_key(other)
-        if kbd is not None and kbd != e_kbd:
+        if kbd is not None and not _is_legacy(kbd) and not _is_legacy(e_kbd) \
+                and kbd != e_kbd:
             continue
-        if mouse is not None and mouse != e_mouse:
+        if mouse is not None and not _is_legacy(mouse) and not _is_legacy(e_mouse) \
+                and mouse != e_mouse:
             continue
         return True
     return False
@@ -84,9 +136,13 @@ def subsumes(general: str, specific: str) -> bool:
     """
     g_kbd, g_mouse = split_key(general)
     s_kbd, s_mouse = split_key(specific)
-    if g_kbd is not None and g_kbd != s_kbd:
+    # A legacy half says nothing, so a `win:global` key is subsumed by any real
+    # one. That is what stops an upgrade from turning one enrolment into a
+    # two-stack (and therefore more permissive) pattern the moment the first
+    # window carrying a real transport is written.
+    if g_kbd is not None and not _is_legacy(g_kbd) and g_kbd != s_kbd:
         return False
-    if g_mouse is not None and g_mouse != s_mouse:
+    if g_mouse is not None and not _is_legacy(g_mouse) and g_mouse != s_mouse:
         return False
     return general != specific
 
@@ -131,7 +187,19 @@ def short_fp(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
+#: Windows identities are transports, not vendor:product pairs, so they read as
+#: gibberish in a log unless they are spelled out.
+_HUMAN = {
+    WINDOWS_CONSOLE_ID: 'physical console',
+    WINDOWS_REMOTE_ID: 'remote session (RDP)',
+    WINDOWS_DEVICE_ID: 'Windows, transport not recorded',
+}
+
+
 def describe(key: str) -> str:
     """A one-line, human-readable form for logs and `status`."""
     kbd, mouse = split_key(key)
-    return f'keyboard {kbd or "—"}, mouse {mouse or "—"}'
+    if kbd is not None and kbd == mouse and kbd in _HUMAN:
+        return _HUMAN[kbd]
+    return (f'keyboard {_HUMAN.get(kbd, kbd) or "—"}, '
+            f'mouse {_HUMAN.get(mouse, mouse) or "—"}')
