@@ -2,41 +2,15 @@
 
 ## Unreleased — it knows its own version, and it counts synthetic input
 
-Two things asked for in the same session: an update mechanism (answered as a notice, never
-a download — see README) and, after the mouse jiggler on this machine turned out to be a
-USB device rather than software, the cheap half of "is this input human?".
+Four things, all asked for in one session and all pointing the same way — the daemon should
+be able to say what it is, what it is looking at, and when it stops looking.
 
-- **`behavioral_auth.__version__` is the single source of truth.** Nothing in `src/` knew
-  which build it was: the version lived in `pyproject.toml`, in the git tag and in
-  `installer.iss`, and attributing a log file to a build meant matching line numbers in
-  tracebacks. `pyproject.toml` now reads the attribute instead of carrying its own copy,
-  all four executables take `--version`, and the daemon logs it as its first line.
-- **The release workflow refuses a tag that disagrees with it**, in both jobs and before
-  anything is built. A binary that misreports its own version would tell every user an
-  upgrade is available forever, since that string is exactly what the new check compares.
-- **`updates.check_enabled`, off in both shipped configs.** While it is false the daemon
-  makes no request at all. Switched on, it asks once a day, caches the answer beside
-  `state.json`, and surfaces it in `behavioral-auth status` and `behavioral-report` —
-  neither of which touches the network. `behavioral-auth check-update` asks on demand
-  regardless of the flag: that setting governs the unattended check, and typing the
-  command is itself the decision.
-- **There is no download path, and that is the design.** This daemon reads every keystroke
-  on the machine and starts at logon, so a channel able to fetch and execute new code here
-  would be the single most valuable thing on the box to subvert. `assets` and
-  `browser_download_url` are not read; a test feeds a payload containing them and asserts
-  they never reach the status.
-- **What the request discloses: nothing about the machine.** One HTTPS GET, a constant
-  `User-Agent` with no version in it, no query string, no token. `updates.url` must be
-  https — over plain http the interesting attack is not a forged version but suppression,
-  answering "you are up to date" and hiding a security fix — and it can be repointed at an
-  internal mirror.
-- **Versions are compared as integer tuples, never as strings.** `'0.5.2' > '0.5.12'`
-  lexicographically, and this project has shipped both; a string comparison would announce
-  a downgrade at every status call. Tags with a suffix (`v0.6.0-rc1`, and the
-  `v0.3.0-citest3` this repository has actually published) are treated as not comparable
-  rather than truncated, so a pre-release is never offered to anybody.
-- **A failed check waits the full interval.** An unreachable network is the normal case
-  for this product, not a reason to retry on every five-second tick or to warn daily.
+An update mechanism, answered as a notice and never a download. The cheap half of "is this
+input human?", once the mouse jiggler on this machine turned out to be a USB device rather
+than software. A SIEM signal for the enrolment's hardware set changing, which was silent
+exactly where it mattered most. And the two things that were being worked around by hand
+daily: no way to stop the daemon cleanly, and a `--config` that ignored what you told it.
+
 ### `behavioral-auth stop`, and `--config` stops lying
 
 - **There was no way to stop a session daemon.** `pause` stops scoring, not collection, so
@@ -119,6 +93,38 @@ and the cheap half — but it is measured rather than inferred.
 - 11 new tests (195 → 206).
 
 ### Version and update notice
+
+- **`behavioral_auth.__version__` is the single source of truth.** Nothing in `src/` knew
+  which build it was: the version lived in `pyproject.toml`, in the git tag and in
+  `installer.iss`, and attributing a log file to a build meant matching line numbers in
+  tracebacks. `pyproject.toml` now reads the attribute instead of carrying its own copy,
+  all four executables take `--version`, and the daemon logs it as its first line.
+- **The release workflow refuses a tag that disagrees with it**, in both jobs and before
+  anything is built. A binary that misreports its own version would tell every user an
+  upgrade is available forever, since that string is exactly what the new check compares.
+- **`updates.check_enabled`, off in both shipped configs.** While it is false the daemon
+  makes no request at all. Switched on, it asks once a day, caches the answer beside
+  `state.json`, and surfaces it in `behavioral-auth status` and `behavioral-report` —
+  neither of which touches the network. `behavioral-auth check-update` asks on demand
+  regardless of the flag: that setting governs the unattended check, and typing the
+  command is itself the decision.
+- **There is no download path, and that is the design.** This daemon reads every keystroke
+  on the machine and starts at logon, so a channel able to fetch and execute new code here
+  would be the single most valuable thing on the box to subvert. `assets` and
+  `browser_download_url` are not read; a test feeds a payload containing them and asserts
+  they never reach the status.
+- **What the request discloses: nothing about the machine.** One HTTPS GET, a constant
+  `User-Agent` with no version in it, no query string, no token. `updates.url` must be
+  https — over plain http the interesting attack is not a forged version but suppression,
+  answering "you are up to date" and hiding a security fix — and it can be repointed at an
+  internal mirror.
+- **Versions are compared as integer tuples, never as strings.** `'0.5.2' > '0.5.12'`
+  lexicographically, and this project has shipped both; a string comparison would announce
+  a downgrade at every status call. Tags with a suffix (`v0.6.0-rc1`, and the
+  `v0.3.0-citest3` this repository has actually published) are treated as not comparable
+  rather than truncated, so a pre-release is never offered to anybody.
+- **A failed check waits the full interval.** An unreachable network is the normal case
+  for this product, not a reason to retry on every five-second tick or to warn daily.
 
 - 47 new tests (148 → 195). The version test found this checkout's editable install three releases
   stale at 0.5.9 on its first run, which is the failure it was written for.
