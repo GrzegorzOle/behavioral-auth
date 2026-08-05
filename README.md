@@ -146,8 +146,9 @@ has hard consequences:
 - What the promotion gate *does* verify: (1) the pattern has **converged** — the
   model reconstructs fresh, never-trained-on behaviour as well as it does its
   training data, and the threshold has stopped moving; (2) the model is **not
-  degenerate** — it reliably flags synthetic impostors built by distorting your
-  own data. That second check is not a formality. An autoencoder handed its own
+  degenerate** — it reliably flags at least one class of synthetic impostor
+  built by distorting your own data, and reports the classes it turned out
+  **blind** to rather than gating on them. That second check is not a formality. An autoencoder handed its own
   target learns to copy it, scores a beautiful, stable, low error for *every
   human alive*, and would never fire on anyone. The gate exists to catch exactly
   that, and during development it caught it.

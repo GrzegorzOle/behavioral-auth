@@ -121,10 +121,19 @@ class StabilityCfg(BaseModel):
     # This is the one error rate that is genuinely measurable here.
     false_alarm_max: float = 0.02
     # Fraction of SYNTHETIC impostor sequences that must exceed the anomaly
-    # threshold, taken over the worst generator. Guards against a degenerate
-    # model that reconstructs anyone's data well — such a model converges
-    # beautifully and detects nothing. Not an accuracy figure: these impostors
-    # are derived from the user's own data, not from a real second person.
+    # threshold, taken over the BEST generator — at least one class of impostor
+    # must be caught this reliably, not every class. That is deliberate and
+    # promotion.py explains why: with overlapping windows a sequence is nearly
+    # constant along its time axis, so some generators change almost nothing and
+    # demanding their detection would demand detecting a difference that is not
+    # there. This comment previously said "worst", which claimed a stricter gate
+    # than the code has ever implemented.
+    #
+    # It guards against a degenerate model that reconstructs anyone's data well —
+    # such a model converges beautifully and detects nothing, scoring ~0 %
+    # everywhere. Not an accuracy figure: these impostors are derived from the
+    # user's own data, not from a real second person, and the classes the model
+    # turns out blind to are reported rather than gated on.
     sanity_detection_min: float = 0.90
 
 
