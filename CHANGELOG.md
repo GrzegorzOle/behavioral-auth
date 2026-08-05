@@ -37,6 +37,29 @@ USB device rather than software, the cheap half of "is this input human?".
   rather than truncated, so a pre-release is never offered to anybody.
 - **A failed check waits the full interval.** An unreachable network is the normal case
   for this product, not a reason to retry on every five-second tick or to warn daily.
+### `behavioral-auth stop`, and `--config` stops lying
+
+- **There was no way to stop a session daemon.** `pause` stops scoring, not collection, so
+  keeping data out meant `taskkill` — which a hidden console app cannot answer, so it died
+  without its `Stopped cleanly` line and DuckDB replayed the WAL on the next start.
+  Survivable, but it was being relied on daily to keep RDP out of an enrolment. `stop` goes
+  through the existing control channel: the caller is answered first, then the ordinary
+  shutdown runs — writer flushed, session row closed, SIEM spool drained, database closed.
+- **It waits for the process to actually go**, up to `--timeout` (30 s). Returning as soon
+  as the daemon was *asked* would be useless to the caller, who is usually about to do the
+  thing the stop was for and needs DuckDB's lock released.
+- **`daemon_stopped` now carries `by_command`**, so a gap in coverage can be read as
+  "somebody asked for this" rather than "it died". No new rule: the action is unchanged.
+- **`--config` with a path that does not exist is now refused instead of ignored.**
+  `config_path()` treats the variable as a *candidate* and falls through to the machine-wide
+  file — deliberate, and load-bearing for a frozen bundle on a box with an empty
+  ProgramData. But for a path a human just typed it meant a typo silently operating on the
+  live pattern; measured, a nonexistent `--config` resolved to the real ProgramData config
+  and delivered its command to the running daemon. With `reset` in the command set that is a
+  foot-gun. Only the explicit argument became strict, in all three CLIs; the environment
+  variable keeps its fallback and a test pins that it does.
+- 10 new tests (225 → 235).
+
 ### A SIEM now hears when the pattern's hardware set changes
 
 `stack_changed` only ever fired against a **frozen** pattern. The enrolment-time case was

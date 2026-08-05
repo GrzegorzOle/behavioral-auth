@@ -83,6 +83,10 @@ class Daemon:
         self._events_at_last_tick = 0
         self._face_since_train = 0
         self._stopping = False
+        # Distinguishes "somebody asked it to stop" from "it died or the box went
+        # down". Both leave the machine unwatched, so the SIEM level is the same,
+        # but an analyst reading a gap in coverage wants to know which it was.
+        self._stop_by_command = False
         self._stack_suspended_on: str | None = None
         # None means "not yet looked", which is what stops a restart from
         # replaying every stack the enrolment already knew about.
@@ -350,7 +354,7 @@ class Daemon:
             self.conn.execute(
                 'UPDATE sessions SET ended_at = now() WHERE session_id = ?', [self.session_id])
             self.store.mark_stopped()
-        self.siem.emit(Category.OPS, 'daemon_stopped')
+        self.siem.emit(Category.OPS, 'daemon_stopped', by_command=self._stop_by_command)
         self.siem.close()                          # one last drain, then report a backlog
         if self.conn:
             self.conn.close()
@@ -724,6 +728,22 @@ class Daemon:
                 self.conn, self.store.enrollment_id)
             self.store.transition(State.LEARNING, 'learn-more requested by user')
             return True, msg
+
+        if cmd == 'stop':
+            # The reply is written by _handle_control *after* this returns, and
+            # _supervise only re-reads the flag once the current tick and its
+            # sleep are done — so the caller is answered before anything shuts
+            # down, and the shutdown itself is the ordinary one: flush the
+            # writer, close the session row, drain the SIEM spool, close DuckDB.
+            #
+            # This exists because there was no way to stop a session daemon
+            # except `taskkill`, which a hidden console app cannot answer: no
+            # "Stopped cleanly", and DuckDB replaying its WAL on the next start.
+            # Survivable, but it is not a clean stop, and on this machine it has
+            # to be done repeatedly to keep RDP out of the enrolment.
+            self._stop_by_command = True
+            self._stopping = True
+            return True, 'Zatrzymuję demona. Zebrane dane i historia cykli zostają.'
 
         if cmd == 'pause':
             # Pausing stops scoring, so it is a window in which nothing is watched.

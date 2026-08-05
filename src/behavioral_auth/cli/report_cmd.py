@@ -31,6 +31,8 @@ def main() -> None:
     args = p.parse_args()
 
     if args.config:
+        if not os.path.exists(args.config):
+            raise SystemExit(f'--config: nie ma takiego pliku: {args.config}')
         os.environ['BEHAVIORAL_AUTH_CONFIG'] = args.config
 
     report()

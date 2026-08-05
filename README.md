@@ -343,7 +343,8 @@ rather not touch it.
 | `behavioral-auth status` | Current state and progress. Works while the daemon runs. |
 | `behavioral-auth reset` | **Somebody else will use this machine.** Destroys the pattern and all face crops, starts learning from zero. |
 | `behavioral-auth learn-more` | Refine the existing pattern with more data. Explicit, never automatic. |
-| `behavioral-auth pause` / `resume` | Stop/start scoring (collection continues). |
+| `behavioral-auth stop` | Shut the daemon down cleanly and wait for it to go. Collection ends; the pattern and cycle history survive. |
+| `behavioral-auth pause` / `resume` | Stop/start scoring — **collection continues**. Not a way to keep data out. |
 | `behavioral-auth set-profile user\|impostor` | Swap the synthetic person mid-run. Only does anything against a daemon started with `--synthetic-input`. |
 | `behavioral-auth check-update` | Ask whether a newer release exists. **Tells you; downloads nothing.** Works regardless of `updates.check_enabled`. |
 | `behavioral-report` | Learning cycles, scores, alarms, pattern age and week-by-week drift. No FAR/FRR — see above. |

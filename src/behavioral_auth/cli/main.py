@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 
 from behavioral_auth import __version__, updates
 from behavioral_auth.collector.windows_source import (
@@ -30,6 +31,26 @@ _STATE_LABEL = {
     State.SUSPENDED.value: (f'{YELLOW}○{RESET}', 'ZAWIESZONY — inny sprzęt niż w nauce'),
     State.BOOTSTRAP.value: (f'{DIM}○{RESET}', 'START'),
 }
+
+
+def _set_config(path: str) -> None:
+    """Honour --config, or refuse — never silently resolve somewhere else.
+
+    config_path() treats BEHAVIORAL_AUTH_CONFIG as the first *candidate* and
+    falls through to the machine-wide file when it does not exist. That fallback
+    is deliberate and load-bearing for the installer (a frozen bundle must still
+    run when ProgramData has been emptied), but it is wrong for a path a human
+    just typed: `--config scratch.yaml` with a typo in it resolved to the real
+    ProgramData config, so a command aimed at a throwaway database would operate
+    on the live pattern. With `reset` among the commands, that is a foot-gun
+    rather than an inconvenience.
+
+    Checked here rather than in config_path(), so the environment keeps the
+    fallback and only the explicit argument becomes strict.
+    """
+    if not os.path.exists(path):
+        raise SystemExit(f'--config: nie ma takiego pliku: {path}')
+    os.environ['BEHAVIORAL_AUTH_CONFIG'] = path
 
 
 def _dispatch(cfg, cmd: str, args: dict) -> int:
@@ -195,6 +216,40 @@ def cmd_learn_more(cfg, args) -> int:
     return _dispatch(cfg, 'learn-more', {})
 
 
+def cmd_stop(cfg, args) -> int:
+    """Shut the daemon down cleanly, and wait to see that it actually went.
+
+    Not routed through _dispatch: its no-daemon fallback opens the database and
+    runs migrations, which is exactly the wrong thing to do on behalf of a
+    command whose whole subject is a running process.
+
+    Waiting matters more than it looks. The daemon notices the flag on its next
+    tick, so "stop" returns long before the process is gone — and the caller is
+    usually about to do the thing the stop was for (connect over RDP, install a
+    new build) where a daemon still holding DuckDB's lock is the problem.
+    """
+    run_dir = cfg.daemon.run_dir
+    if not control.daemon_running(run_dir):
+        print('Demon nie działa — nie ma czego zatrzymywać.')
+        return 1
+
+    result = control.send(run_dir, 'stop', {})
+    print(result.get('message', ''))
+    if not result.get('ok'):
+        return 1
+
+    deadline = time.monotonic() + args.timeout
+    while time.monotonic() < deadline:
+        if not control.daemon_running(run_dir):
+            print(f'{GREEN}Zatrzymany.{RESET}')
+            return 0
+        time.sleep(0.5)
+
+    print(f'{YELLOW}Nadal działa po {args.timeout:.0f}s.{RESET} Sprawdź '
+          f'behavioral-auth.log — zamykanie mogło się zawiesić.')
+    return 1
+
+
 def cmd_pause(cfg, args) -> int:
     return _dispatch(cfg, 'pause', {})
 
@@ -241,6 +296,10 @@ def main() -> None:
 
     sub.add_parser('learn-more', help='doucz istniejący wzorzec (jawnie, nie automatycznie)'
                    ).set_defaults(fn=cmd_learn_more)
+    st = sub.add_parser('stop', help='zatrzymaj demona czysto (zbieranie ustaje)')
+    st.add_argument('--timeout', type=float, default=30.0, metavar='SEC',
+                    help='ile czekać na wyjście procesu (domyślnie 30)')
+    st.set_defaults(fn=cmd_stop)
     sub.add_parser('pause', help='wstrzymaj punktację').set_defaults(fn=cmd_pause)
     sub.add_parser('resume', help='wznów punktację').set_defaults(fn=cmd_resume)
     sub.add_parser('db', help='utwórz/zmigruj bazę').set_defaults(fn=cmd_db)
@@ -256,7 +315,7 @@ def main() -> None:
 
     args = p.parse_args()
     if args.config:
-        os.environ['BEHAVIORAL_AUTH_CONFIG'] = args.config
+        _set_config(args.config)
 
     sys.exit(args.fn(load_settings(), args))
 
