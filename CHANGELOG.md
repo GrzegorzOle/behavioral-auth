@@ -37,6 +37,38 @@ USB device rather than software, the cheap half of "is this input human?".
   rather than truncated, so a pre-release is never offered to anybody.
 - **A failed check waits the full interval.** An unreachable network is the normal case
   for this product, not a reason to retry on every five-second tick or to warn daily.
+### A SIEM now hears when the pattern's hardware set changes
+
+`stack_changed` only ever fired against a **frozen** pattern. The enrolment-time case was
+silent, and it is the one that matters more: a pattern learned across two sets of input
+devices has a wider spread, so a higher threshold, so it accepts **more**. Swapping the
+keyboard or the mouse half-way through enrolment permanently widens the gate an impostor
+has to pass, and it happened with nothing forwarded and nobody watching.
+
+- **`ops.enrollment_stack_added`** — WARNING, while LEARNING, when the enrolment starts
+  covering hardware it did not. Rules 100218 / 100248, level 7: while the pattern is still
+  learning an operator can still undo this with a reset; once frozen they cannot.
+- **`ops.pattern_promoted`** — carries `n_stacks` and a `multi_stack` boolean, so a SIEM
+  learns not just that a pattern was frozen but **how wide** it is. Rules 100219 / 100249 at
+  7 for a mixed pattern, 100220 / 100250 at 3 for a single-stack one. The boolean exists
+  because Wazuh's `<field>` matches a regex, not a magnitude — "n_stacks > 1" is not
+  something a rule can ask, so the daemon answers it. A test pins that.
+- **Growth is detected with `newly_seen()`, not a set difference.** A setup first seen
+  through windows of pure typing reports `kbd/-`; the moment the mouse moves the
+  consolidated set becomes `kbd/mouse` and the old key is gone. A plain difference would
+  have announced new hardware the first time anyone touched their mouse — the same trap
+  `consolidate()` was written for, arriving from the other direction.
+- **Seeded on first look, never replayed.** Restarting the daemon mid-enrolment does not
+  re-announce every stack it already knew about; the promotion event carries the final
+  count for exactly the changes that happened while it was down.
+- **Still hashed fingerprints and counts only.** No device names, no vendor/product ids —
+  Wazuh's syscollector already inventories hardware. A test asserts the ids do not appear.
+- **Inert on Windows**, like the rest of the stack machinery: one global hook means one
+  apparent device, so the set never grows. The promotion event is *not* inert and reports a
+  single-stack pattern there today.
+- 19 new tests (206 → 225), including six that pin the daemon's wiring rather than the
+  helper alone.
+
 ### Injected input is now counted, on Windows
 
 The first thing in this project that asks whether its input was *human*. Half an answer,

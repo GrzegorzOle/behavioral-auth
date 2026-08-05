@@ -157,6 +157,7 @@ manager). If you do, this is the complete list of what is sent:
 | Operations: daemon start/stop, `pause`, `learn-more`, and `reset` | Photographs of your face, or any frame from the camera |
 | Whether the camera matched, as the word `match`, `stranger` or `unknown` | Feature vectors, sequences, model weights, the scaler, the threshold |
 | Input devices attached or lost, and changes of hardware stack, as a **hashed** fingerprint | Device names, vendor/product ids — anything amounting to a hardware inventory |
+| The enrolment starting to span a second set of input devices, and how many sets the frozen pattern covers | — |
 | The hostname, and the enrolment/session UUIDs | Per-sequence scores — at a 5 s stride that is hundreds an hour |
 
 The event carries a **verdict and a number, never the behaviour they were computed

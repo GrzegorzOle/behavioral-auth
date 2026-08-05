@@ -4,7 +4,7 @@
   Install on the MANAGER as /var/ossec/etc/rules/0910-behavioral-auth_rules.xml,
   then restart wazuh-manager.
 
-  Rule ids 100200-100217 sit in the user range (>= 100000); change them if that
+  Rule ids 100200-100220 sit in the user range (>= 100000); change them if that
   block is already taken on your manager.
 
   On the levels.
@@ -162,6 +162,46 @@
     <field name="category">^ops$</field>
     <field name="action">^stack_changed$</field>
     <description>behavioral-auth: enrolled hardware returned — scoring resumed</description>
+  </rule>
+
+  <!--
+    The two above concern a pattern that is already frozen. These concern the
+    pattern being BUILT, and they are the more consequential pair.
+
+    A pattern learned across two sets of hardware has a wider spread, so its
+    threshold sits higher, so it accepts MORE. Changing the keyboard or the mouse
+    part-way through enrolment therefore does not just add noise — it
+    permanently widens the gate an impostor has to pass, and it happens with
+    nobody watching. At 7, because while the pattern is still learning this is
+    something an operator can still undo with a reset; once frozen it cannot.
+  -->
+  <rule id="100218" level="7">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^enrollment_stack_added$</field>
+    <description>behavioral-auth: the pattern being learned now spans another set of input devices — the frozen result will be more permissive</description>
+    <group>pci_dss_10.6.1,</group>
+  </rule>
+
+  <!--
+    Promotion is also reported as a state transition (100211). This carries the
+    fact that transition cannot: how wide the frozen pattern is. Specific rule
+    first, so a mixed pattern does not fall through to the routine one.
+  -->
+  <rule id="100219" level="7">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^pattern_promoted$</field>
+    <field name="detail.multi_stack">^true$</field>
+    <description>behavioral-auth: a pattern spanning $(detail.n_stacks) sets of input devices was frozen — it is more permissive than one learned on a single set</description>
+    <group>pci_dss_10.6.1,</group>
+  </rule>
+
+  <rule id="100220" level="3">
+    <if_sid>100200</if_sid>
+    <field name="category">^ops$</field>
+    <field name="action">^pattern_promoted$</field>
+    <description>behavioral-auth: pattern frozen on a single set of input devices</description>
   </rule>
 
   <!-- ── State machine ──────────────────────────────────────────────────── -->

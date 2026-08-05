@@ -15,7 +15,7 @@ agent only ships the line.
 
 Nothing about the syslog framing survives on Windows — there is no frame at all —
 so a single decoder cannot serve both. Rule ids are separate blocks
-(100200–100217 and 100230–100247) but **the levels are deliberately identical**,
+(100200–100220 and 100230–100250) but **the levels are deliberately identical**,
 so the same incident reads the same whichever machine raised it.
 
 ## Why this is needed at all
@@ -111,8 +111,8 @@ Rules 100201 and 100202 are kept apart because the daemon keeps the face channel
 out of the behavioural verdict. Folding a camera verdict into a behavioural one
 was a real bug in this project once; do not merge them here either.
 
-Rule ids live in the user range (≥ 100000). Renumber if 100200–100217 (syslog)
-or 100230–100247 (Event Log) is taken — and renumber both together, so the two
+Rule ids live in the user range (≥ 100000). Renumber if 100200–100220 (syslog)
+or 100230–100250 (Event Log) is taken — and renumber both together, so the two
 transports stay easy to read side by side.
 
 ## Windows: the eventchannel path (`0911-*`)

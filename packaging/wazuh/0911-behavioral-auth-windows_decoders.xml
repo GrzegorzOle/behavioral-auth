@@ -132,3 +132,21 @@
   <regex type="pcre2">\\?"purge_data\\?"\s*:\s*(true|false)</regex>
   <order>ba_purge_data</order>
 </decoder>
+
+<!--
+  pattern_promoted says how wide the frozen pattern is. multi_stack is a boolean
+  purely so a rule can key on it: Wazuh's <field> matches a regex, not a numeric
+  comparison, so "is n_stacks greater than one" is not something a rule can ask.
+  n_stacks is extracted alongside it for the alert text.
+-->
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"multi_stack\\?"\s*:\s*(true|false)</regex>
+  <order>ba_multi_stack</order>
+</decoder>
+
+<decoder name="behavioral-auth-win">
+  <parent>behavioral-auth-win</parent>
+  <regex type="pcre2">\\?"n_stacks\\?"\s*:\s*(\d+)</regex>
+  <order>ba_n_stacks</order>
+</decoder>

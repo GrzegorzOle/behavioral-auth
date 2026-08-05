@@ -5,10 +5,10 @@
   /var/ossec/etc/rules/0911-behavioral-auth-windows_rules.xml, then restart
   wazuh-manager. Pairs with 0911-behavioral-auth-windows_decoders.xml.
 
-  Rule ids 100230-100247, a separate block from the syslog pair's 100200-100217.
+  Rule ids 100230-100250, a separate block from the syslog pair's 100200-100220.
   Change them if that range is already taken on your manager.
 
-  THE LEVELS ARE DELIBERATELY IDENTICAL to 100200-100217. Same events, same
+  THE LEVELS ARE DELIBERATELY IDENTICAL to 100200-100220. Same events, same
   meanings, different transport. If these ever drift apart, the same incident
   reads as two different severities depending on which operating system raised
   it, and an analyst comparing two machines is comparing the tooling instead of
@@ -162,6 +162,41 @@
     <field name="ba_category">^ops$</field>
     <field name="ba_action">^stack_changed$</field>
     <description>behavioral-auth: enrolled hardware returned — scoring resumed</description>
+  </rule>
+
+  <!--
+    The syslog twins of these are 100218-100220, and the levels are identical on
+    purpose — a test pins that. The one below concerns the pattern being BUILT
+    rather than a frozen one: a pattern learned across two sets of input devices
+    has a wider spread, so a higher threshold, so it accepts MORE. Changing the
+    keyboard or mouse mid-enrolment permanently widens the gate an impostor has
+    to pass.
+
+    100248 is inert on Windows for the same reason as the block above — one
+    global hook, one apparent device, so the set never grows. 100249/100250 are
+    NOT inert: promotion reports the count whatever it is, so a Windows agent
+    will report a single-stack promotion at level 3 today.
+  -->
+  <rule id="100248" level="7">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^enrollment_stack_added$</field>
+    <description>behavioral-auth: the pattern being learned now spans another set of input devices — the frozen result will be more permissive</description>
+  </rule>
+
+  <rule id="100249" level="7">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^pattern_promoted$</field>
+    <field name="ba_multi_stack">^true$</field>
+    <description>behavioral-auth: a pattern spanning $(ba_n_stacks) sets of input devices was frozen — it is more permissive than one learned on a single set</description>
+  </rule>
+
+  <rule id="100250" level="3">
+    <if_sid>100230</if_sid>
+    <field name="ba_category">^ops$</field>
+    <field name="ba_action">^pattern_promoted$</field>
+    <description>behavioral-auth: pattern frozen on a single set of input devices</description>
   </rule>
 
   <!-- ── State transitions ──────────────────────────────────────────────── -->

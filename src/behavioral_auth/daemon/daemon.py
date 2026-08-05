@@ -28,7 +28,7 @@ from loguru import logger
 from behavioral_auth import updates
 from behavioral_auth.collector.device_detector import detect_devices
 from behavioral_auth.collector.source import SyntheticSource, run_evdev
-from behavioral_auth.collector.stack import describe, short_fp
+from behavioral_auth.collector.stack import describe, newly_seen, short_fp
 from behavioral_auth.collector.writer import Writer
 from behavioral_auth.config import Settings
 from behavioral_auth.daemon import commands, control
@@ -84,6 +84,9 @@ class Daemon:
         self._face_since_train = 0
         self._stopping = False
         self._stack_suspended_on: str | None = None
+        # None means "not yet looked", which is what stops a restart from
+        # replaying every stack the enrolment already knew about.
+        self._enrolment_stacks: list[str] | None = None
         # Windows only; see _start_sources. None means "this platform cannot
         # tell", which is not the same as "nothing was injected".
         self.injection = None
@@ -394,8 +397,50 @@ class Daemon:
 
     # ── LEARNING ──────────────────────────────────────────────────────────
 
+    def _check_enrollment_stacks(self, eid: str) -> None:
+        """Tell a SIEM when the enrolment starts covering hardware it did not.
+
+        The LEARNING-time counterpart of `stack_changed`, which only ever fires
+        against a *frozen* pattern. The enrolment-time case was silent, and it is
+        the one that matters more: a pattern learned across two stacks has a
+        wider spread, so a higher threshold, so it accepts MORE. Swapping the
+        keyboard or the mouse halfway through enrolment does not merely add
+        noise — it widens the gate an impostor has to pass, permanently, and it
+        happens with nobody watching. That is a security change and a SIEM should
+        hear about it while it can still be undone with a reset.
+
+        Seeded on the first call rather than emitted, so restarting the daemon
+        mid-enrolment does not replay stacks it already knew about. What happened
+        while the daemon was down is not observable here; the promotion event
+        carries the final count for exactly that reason.
+
+        Inert on Windows, like the rest of the stack machinery: pynput reports
+        one global hook, so every event claims the same device and the set never
+        grows. Real per-device identity there needs RawInput (WM_INPUT).
+        """
+        stacks = dataset.trained_stacks(self.conn, eid)
+        if self._enrolment_stacks is None:
+            self._enrolment_stacks = stacks
+            return
+        # newly_seen(), not a set difference: consolidation REPLACES a key when a
+        # setup is first seen more fully (kbd/- becomes kbd/mouse), and a plain
+        # difference would report that as new hardware every time.
+        fresh = newly_seen(self._enrolment_stacks, stacks)
+        self._enrolment_stacks = stacks
+        for key in fresh:
+            logger.warning(
+                f'The pattern being learned now covers a second set of hardware '
+                f'({describe(key)}). A pattern spanning more than one is MORE '
+                f'permissive than one learned on a single set — its threshold sits '
+                f'higher, so it accepts more. If this was not deliberate, '
+                f'"behavioral-auth reset" before it is frozen.')
+            self.siem.emit(Category.OPS, 'enrollment_stack_added',
+                           severity=Severity.WARNING, stack_fp=short_fp(key),
+                           n_stacks=len(stacks))
+
     async def _tick_learning(self, eid: str) -> None:
         active = self._has_activity()
+        self._check_enrollment_stacks(eid)
 
         if self.cfg.face.enabled and self.cfg.face.backend == 'opencv':
             self._maybe_sample_face(eid, active)
@@ -434,6 +479,17 @@ class Daemon:
         if promote:
             self.learn.promote(self.conn, eid, artifacts)
             self.pattern = runtime.load_pattern(self.cfg)
+            # What the frozen pattern is entitled to judge. A SIEM that only sees
+            # the state transition learns that a pattern was promoted but not how
+            # wide it is, and width is the security property here: more than one
+            # stack means a higher threshold, which accepts more. `multi_stack`
+            # is a boolean so a rule can match it without numeric comparison.
+            stacks = self.pattern.stacks if self.pattern else []
+            self.siem.emit(
+                Category.OPS, 'pattern_promoted',
+                severity=Severity.WARNING if len(stacks) > 1 else Severity.NOTICE,
+                n_stacks=len(stacks), multi_stack=len(stacks) > 1,
+                stack_fps=[short_fp(s) for s in stacks])
             self.monitor.reset()
             self._last_scored_ns = self._newest_seq_ns()
             self.store.transition(State.MONITORING, 'pattern converged and passed the sanity gate')

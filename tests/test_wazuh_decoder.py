@@ -148,3 +148,63 @@ def test_the_two_transports_agree_on_levels():
     # And neither transport should quietly stop covering an event the other has.
     assert not set(syslog) ^ set(evtlog), (
         f'actions covered by only one transport: {set(syslog) ^ set(evtlog)}')
+
+
+# ── the enrolment's hardware set ─────────────────────────────────────────────
+#
+# These two events are what a SIEM needs in order to notice that the pattern
+# defining "who the owner is" was widened. A pattern spanning two sets of input
+# devices has a higher threshold, so it accepts more; the SIEM previously heard
+# only that a promotion happened, never how wide the result was.
+
+_STACK_PAYLOADS = [
+    ('{"category":"ops","action":"enrollment_stack_added","severity":4,'
+     '"detail":{"stack_fp":"9f2c1ab77e10","n_stacks":2}}',
+     {'ba_action': 'enrollment_stack_added', 'ba_n_stacks': '2'}),
+    ('{"category":"ops","action":"pattern_promoted","severity":4,'
+     '"detail":{"multi_stack":true,"n_stacks":2,"stack_fps":["9f2c","1ab7"]}}',
+     {'ba_action': 'pattern_promoted', 'ba_multi_stack': 'true', 'ba_n_stacks': '2'}),
+    ('{"category":"ops","action":"pattern_promoted","severity":5,'
+     '"detail":{"multi_stack":false,"n_stacks":1,"stack_fps":["9f2c"]}}',
+     {'ba_action': 'pattern_promoted', 'ba_multi_stack': 'false', 'ba_n_stacks': '1'}),
+]
+
+
+@pytest.mark.parametrize('payload, expected', _STACK_PAYLOADS)
+@pytest.mark.parametrize('escaped', [False, True], ids=['plain', 'escaped'])
+def test_stack_fields_extract_on_the_windows_path(payload, expected, escaped):
+    body = payload.replace('"', '\\"') if escaped else payload
+    line = ENVELOPE % body
+    _, fields = _win_decoder()
+    for field, want in expected.items():
+        m = re.search(fields[field], line)
+        assert m, f'{field} did not match ({"escaped" if escaped else "plain"})'
+        assert m.group(1) == want
+
+
+def test_multi_stack_is_a_boolean_because_wazuh_cannot_compare_numbers():
+    """`<field>` matches a regex, not a magnitude, so "n_stacks > 1" is not
+    something a rule can express. The daemon answers the question instead and
+    the rule keys on the answer — pinned here so nobody replaces the boolean
+    with the count and quietly breaks the alert for two stacks."""
+    for rules, prefix in (('0910-behavioral-auth_rules.xml', 'detail.'),
+                          ('0911-behavioral-auth-windows_rules.xml', 'ba_')):
+        root = _load(rules)
+        keyed = [r for r in root.iter('rule')
+                 if any(f.get('name') == f'{prefix}multi_stack' for f in r.findall('field'))]
+        assert len(keyed) == 1, f'{rules}: expected exactly one multi_stack rule'
+        assert keyed[0].get('level') == '7'
+
+
+def test_a_widened_enrolment_outranks_a_routine_promotion():
+    """The whole point of the pair. If these ever equalise, the event that says
+    the pattern got more permissive stops standing out from the one that says a
+    pattern was frozen normally."""
+    root = _load('0910-behavioral-auth_rules.xml')
+    levels = {}
+    for r in root.iter('rule'):
+        for f in r.findall('field'):
+            if f.get('name') == 'action':
+                levels.setdefault(f.text, []).append(int(r.get('level')))
+    assert max(levels['^enrollment_stack_added$']) == 7
+    assert max(levels['^pattern_promoted$']) > min(levels['^pattern_promoted$'])

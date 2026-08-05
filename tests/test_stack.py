@@ -13,7 +13,14 @@ from datetime import datetime, timezone
 import pytest
 
 from behavioral_auth.collector.stack import (
-    ABSENT, describe, device_id, key_matches, short_fp, split_key, stack_key,
+    ABSENT,
+    describe,
+    device_id,
+    key_matches,
+    newly_seen,
+    short_fp,
+    split_key,
+    stack_key,
 )
 from behavioral_auth.features.pipeline import (
     build_feature_windows, build_sequences, window_stack,
@@ -391,3 +398,112 @@ def test_enrolled_hardware_returning_resumes_scoring(cfg, conn):
 
     assert d.store.state is State.MONITORING
     assert [e for e in d.siem.events if e[1] == 'stack_changed'][-1][3]['known'] is True
+
+
+# ── noticing that an enrolment has grown to cover more hardware ───────────────
+
+def test_a_setup_seen_more_fully_is_not_new_hardware():
+    """The trap consolidate() exists for, arriving from the other side.
+
+    A setup first seen through windows of pure typing reports `kbd/-`; the moment
+    the mouse moves, the consolidated set becomes `kbd/mouse` and `kbd/-` is
+    gone. A plain set difference calls that a second stack and would announce a
+    hardware change the first time anyone touched their mouse.
+    """
+    assert newly_seen(['k1/-'], ['k1/m1']) == []
+
+
+def test_a_genuinely_different_stack_is_new():
+    assert newly_seen(['k1/m1'], ['k1/m1', 'k2/m1']) == ['k2/m1']
+
+
+def test_a_swapped_mouse_is_new_hardware():
+    assert newly_seen(['k1/m1'], ['k1/m2']) == ['k1/m2']
+
+
+def test_nothing_changing_reports_nothing():
+    assert newly_seen(['k1/m1', 'k2/m2'], ['k1/m1', 'k2/m2']) == []
+
+
+def test_a_stack_disappearing_is_not_reported():
+    """Only growth matters. A stack no longer contributing windows has not made
+    the pattern wider, and the pattern keeps whatever it already learned."""
+    assert newly_seen(['k1/m1', 'k2/m2'], ['k1/m1']) == []
+
+
+def test_the_first_stack_of_a_fresh_enrolment_is_new():
+    assert newly_seen([], ['k1/m1']) == ['k1/m1']
+
+
+# ── the daemon's SIEM wiring for it ──────────────────────────────────────────
+
+class _RecordingSiem:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, category, action, severity=None, **detail):
+        self.events.append((category, action, severity, detail))
+
+
+def _stub_daemon(siem):
+    from types import SimpleNamespace
+    return SimpleNamespace(conn=None, siem=siem, _enrolment_stacks=None)
+
+
+def _check(monkeypatch, stub, stacks):
+    from behavioral_auth.daemon import daemon as daemon_mod
+    monkeypatch.setattr(daemon_mod.dataset, 'trained_stacks',
+                        lambda conn, eid: stacks)
+    daemon_mod.Daemon._check_enrollment_stacks(stub, 'e1')
+
+
+def test_the_first_look_seeds_and_never_emits(monkeypatch):
+    """Otherwise every daemon restart mid-enrolment replays the whole set as if
+    the hardware had just been swapped."""
+    siem = _RecordingSiem()
+    stub = _stub_daemon(siem)
+    _check(monkeypatch, stub, ['k1/m1', 'k2/m2'])
+    assert siem.events == []
+    assert stub._enrolment_stacks == ['k1/m1', 'k2/m2']
+
+
+def test_a_second_set_of_hardware_is_forwarded(monkeypatch):
+    siem = _RecordingSiem()
+    stub = _stub_daemon(siem)
+    _check(monkeypatch, stub, ['k1/m1'])
+    _check(monkeypatch, stub, ['k1/m1', 'k2/m2'])
+    assert len(siem.events) == 1
+    category, action, severity, detail = siem.events[0]
+    assert (category, action) == ('ops', 'enrollment_stack_added')
+    assert severity == 4                       # WARNING
+    assert detail['n_stacks'] == 2
+    assert len(detail['stack_fp']) == 12       # hashed, not a hardware inventory
+    assert 'k2' not in detail['stack_fp']
+
+
+def test_touching_the_mouse_for_the_first_time_is_not_a_hardware_change(monkeypatch):
+    siem = _RecordingSiem()
+    stub = _stub_daemon(siem)
+    _check(monkeypatch, stub, ['k1/-'])
+    _check(monkeypatch, stub, ['k1/m1'])
+    assert siem.events == []
+
+
+def test_the_same_stack_is_not_forwarded_twice(monkeypatch):
+    siem = _RecordingSiem()
+    stub = _stub_daemon(siem)
+    _check(monkeypatch, stub, ['k1/m1'])
+    _check(monkeypatch, stub, ['k1/m1', 'k2/m2'])
+    _check(monkeypatch, stub, ['k1/m1', 'k2/m2'])
+    assert len(siem.events) == 1
+
+
+def test_no_device_names_or_ids_leave_the_machine(monkeypatch):
+    """[[siem-forwarding-privacy-rules]]: Wazuh's syscollector already inventories
+    hardware. This says "that stack again", not "a Logitech K120"."""
+    siem = _RecordingSiem()
+    stub = _stub_daemon(siem)
+    _check(monkeypatch, stub, ['046d:c31c/046d:c077'])
+    _check(monkeypatch, stub, ['046d:c31c/046d:c077', '1a2b:3c4d/1a2b:5e6f'])
+    blob = repr(siem.events)
+    assert '1a2b' not in blob and '3c4d' not in blob

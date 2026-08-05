@@ -103,6 +103,24 @@ def consolidate(keys: Iterable[str]) -> list[str]:
     return [k for k in uniq if not any(subsumes(k, other) for other in uniq)]
 
 
+def newly_seen(previous: Iterable[str], current: Iterable[str]) -> list[str]:
+    """Stacks in *current* that are genuinely new, not merely better observed.
+
+    The trap this exists to avoid is the one :func:`consolidate` was written for,
+    arriving from the other direction. A setup first seen through windows of pure
+    typing reports ``kbd/-``; the moment the mouse moves, the consolidated set
+    becomes ``kbd/mouse`` and ``kbd/-`` disappears. A plain set difference calls
+    that a second hardware stack and would announce a change of hardware every
+    time somebody touched their mouse for the first time in a session.
+
+    So a key counts as new only when no previously known key is the same stack
+    seen less completely.
+    """
+    prev = list(previous)
+    return [k for k in current
+            if not any(k == p or subsumes(p, k) for p in prev)]
+
+
 def short_fp(key: str) -> str:
     """A stable, short handle for a stack — what goes to the SIEM.
 
