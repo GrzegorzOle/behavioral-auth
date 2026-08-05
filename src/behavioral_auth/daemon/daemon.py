@@ -84,6 +84,10 @@ class Daemon:
         self._face_since_train = 0
         self._stopping = False
         self._stack_suspended_on: str | None = None
+        # Windows only; see _start_sources. None means "this platform cannot
+        # tell", which is not the same as "nothing was injected".
+        self.injection = None
+        self._injection_warned: set[str] = set()
         # Device path -> reader task, so a re-scan can tell what is already open
         # and notice when a reader has died with its device.
         self._readers: dict[str, asyncio.Task] = {}
@@ -170,9 +174,16 @@ class Daemon:
             # Windows has no evdev; a global pynput hook produces the same event
             # rows (collector/windows_source.py). Imported here so pynput is only
             # touched on Windows and Linux imports stay evdev-only.
-            from behavioral_auth.collector.windows_source import run_windows_hook
+            from behavioral_auth.collector.windows_source import (
+                InjectionStats,
+                run_windows_hook,
+            )
+            # Only Windows can answer "was this typed or synthesised?" — the
+            # low-level hooks carry the flag and evdev has no equivalent. Left
+            # None elsewhere rather than faked.
+            self.injection = InjectionStats()
             self.tasks.append(asyncio.create_task(
-                run_windows_hook(self.writer, self.session_id)))
+                run_windows_hook(self.writer, self.session_id, self.injection)))
             return
 
         devices = detect_devices(self.cfg.collector.devices)
@@ -230,6 +241,33 @@ class Daemon:
                 self._open_reader(path)
             except OSError as exc:
                 logger.warning(f'Could not open {path}: {exc}')
+
+    def _check_injection(self) -> None:
+        """Say once, per channel, when much of the input claims to be synthetic.
+
+        Once and not repeatedly: a machine with a macro tool or an accessibility
+        aid on it would otherwise log the same line every five seconds, and a
+        warning nobody can silence is a warning everybody learns to skip. The
+        live numbers stay in `status` for as long as anyone wants to watch them.
+
+        This never stops collection. Injected input is not by itself illegitimate
+        — see InjectionStats — and it is the *enrolment* that should be judged
+        with this in hand, by a person.
+        """
+        if self.injection is None:
+            return
+        for channel in self.injection.loud_channels():
+            if channel in self._injection_warned:
+                continue
+            self._injection_warned.add(channel)
+            share = (self.injection.keyboard_share if channel == 'keyboard'
+                     else self.injection.mouse_share)
+            logger.warning(
+                f'{share:.0%} of {channel} events so far were injected by software, '
+                f'not produced by a device. Something is synthesising input on this '
+                f'machine — a macro tool, remote support, an anti-idle utility. '
+                f'A pattern learned from it is a pattern of that software, not of '
+                f'you. Nothing has been dropped and nothing is being refused.')
 
     # ── update notice ─────────────────────────────────────────────────────
 
@@ -331,6 +369,7 @@ class Daemon:
         self.writer.flush()
         self._handle_control()
         self._rescan_devices()
+        self._check_injection()
         self._maybe_check_updates()
 
         eid = self.store.enrollment_id
@@ -656,6 +695,9 @@ class Daemon:
         s.state = self.store.state.value
         s.enrollment_id = eid
         s.session_id = self.session_id
+        # Stays None on platforms that cannot answer the question, so a reader
+        # can tell "no injection seen" apart from "never looked".
+        s.injection = self.injection.as_dict() if self.injection else None
 
         if self.store.state is State.LEARNING:
             s.n_sequences = dataset.count_sequences(self.conn, eid)

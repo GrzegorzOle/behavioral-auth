@@ -76,6 +76,32 @@ stranger, not just more likely to nag you. If you enrol docked and then undock,
 the daemon suspends scoring and tells you; `learn-more` will fold the second setup
 in, and will warn you at that moment about exactly this cost.
 
+### It notices when input is being synthesised — on Windows, and only half of it
+
+A behavioural biometric enrols whatever moves the cursor. Point an anti-idle jiggler or a
+macro tool at the machine during enrolment and the pattern it freezes is a pattern of that
+software, not of you — and the same trick is available to an attacker on purpose.
+
+On Windows the low-level hooks flag events that came from `SendInput` rather than from a
+device, so the daemon counts them. `behavioral-auth status` shows the share per channel,
+and the log says so once, loudly, when a channel is mostly synthetic:
+
+```
+  wstrzyknięte klawiatura 0.0%, mysz 67.4%  ← coś syntetyzuje wejście na tej maszynie
+```
+
+**Nothing is dropped and nothing is refused.** Screen readers, on-screen keyboards, remote
+support and KVM software all inject legitimately; discarding their input would blind the
+collector exactly when someone most needs it. This tells you, and the judgement about
+whether to trust the enrolment is yours.
+
+**It is half an answer, and the half it misses matters.** A *hardware* jiggler on a USB
+port produces genuine HID events with the flag clear — nothing here can see one. Catching
+that needs per-device identity (RawInput / `WM_INPUT`), which is not implemented; on Linux
+the hardware-stack fingerprint above would show it, on Windows every event still claims one
+global device. Linux has no equivalent of the injected flag at all, so `status` there shows
+nothing rather than a reassuring zero.
+
 ---
 
 ## Be clear about what this can and cannot tell you

@@ -75,6 +75,12 @@ class Snapshot:
     alarm_reason: str | None = None
     alarm_peak_ratio: float | None = None
 
+    # How much of the captured input claims to have been synthesised rather than
+    # typed. Windows only — the low-level hooks carry the flag and evdev has no
+    # equivalent — so None means "this platform cannot tell", which a reader must
+    # not confuse with "nothing was injected".
+    injection: dict | None = None
+
     # Hardware stack
     pattern_stacks: list[str] = field(default_factory=list)
     stack_suspended_on: str | None = None

@@ -45,6 +45,100 @@ from behavioral_auth.collector.stack import WINDOWS_DEVICE_ID
 _KBD_PATH, _MOUSE_PATH = '/windows/keyboard', '/windows/mouse'
 _BUTTONS = {'left': BTN_LEFT, 'right': BTN_RIGHT, 'middle': BTN_MIDDLE}
 
+# Bits the low-level hooks set on an event that came from SendInput rather than
+# from a physical device. The mouse and keyboard structures do not agree on where
+# the bit lives, which is why these are two separate masks and not one constant.
+#   MSLLHOOKSTRUCT.flags:  LLMHF_INJECTED 0x01, LLMHF_LOWER_IL_INJECTED 0x02
+#   KBDLLHOOKSTRUCT.flags: LLKHF_INJECTED 0x10, LLKHF_LOWER_IL_INJECTED 0x02
+# The lower-integrity variant is counted as injected too: input synthesised by a
+# *less* privileged process is more interesting here, not less.
+_MOUSE_INJECTED_MASK = 0x01 | 0x02
+_KBD_INJECTED_MASK = 0x10 | 0x02
+
+# Below this many events a share means nothing — three injected events out of
+# four is 75 % and is noise. Above it, the share is worth saying out loud.
+INJECTION_MIN_SAMPLE = 500
+INJECTION_WARN_SHARE = 0.20
+
+
+class InjectionStats:
+    """How much of the captured input says it was synthesised, not typed.
+
+    Nothing in this project asked whether its input was *human* until now — an
+    anti-idle jiggler supplied roughly two thirds of this machine's mouse events
+    for days and the enrolment learned from it. Windows answers half of that
+    question for free: both low-level hooks carry a flag saying the event came
+    from ``SendInput``, and pynput passes the whole hook structure to an
+    ``event_filter`` before dispatching. The flag was reaching Python already and
+    was simply being dropped.
+
+    It answers only half. A **hardware** jiggler on a USB port produces genuine
+    HID events with the flag clear, so this cannot see one — that needs per-device
+    identity, which means RawInput (``WM_INPUT``) and is not this class. The two
+    detect different adversaries and neither subsumes the other.
+
+    This counts and reports. It does not drop events and does not refuse to
+    learn: accessibility tools, on-screen keyboards, remote-support software and
+    KVM switches all inject legitimately, and silently discarding their input
+    would blind the collector in exactly the situations a user most needs it.
+    Consistent with the rest of the product, it warns.
+
+    Pure — no pynput, no threads, no I/O — so it is unit-tested directly, like
+    :class:`_Shaper`.
+    """
+
+    def __init__(self) -> None:
+        self.keyboard_total = 0
+        self.keyboard_injected = 0
+        self.mouse_total = 0
+        self.mouse_injected = 0
+
+    def record_keyboard(self, flags: int) -> None:
+        self.keyboard_total += 1
+        if flags & _KBD_INJECTED_MASK:
+            self.keyboard_injected += 1
+
+    def record_mouse(self, flags: int) -> None:
+        self.mouse_total += 1
+        if flags & _MOUSE_INJECTED_MASK:
+            self.mouse_injected += 1
+
+    @staticmethod
+    def _share(injected: int, total: int) -> float:
+        return injected / total if total else 0.0
+
+    @property
+    def keyboard_share(self) -> float:
+        return self._share(self.keyboard_injected, self.keyboard_total)
+
+    @property
+    def mouse_share(self) -> float:
+        return self._share(self.mouse_injected, self.mouse_total)
+
+    def loud_channels(self) -> list[str]:
+        """Channels whose injected share is both large enough and sure enough.
+
+        Both conditions matter. Without the sample floor the very first injected
+        event reads as 100 % and the daemon would cry wolf on the first tick.
+        """
+        out = []
+        for name, total, share in (
+                ('keyboard', self.keyboard_total, self.keyboard_share),
+                ('mouse', self.mouse_total, self.mouse_share)):
+            if total >= INJECTION_MIN_SAMPLE and share >= INJECTION_WARN_SHARE:
+                out.append(name)
+        return out
+
+    def as_dict(self) -> dict:
+        return {
+            'keyboard_total': self.keyboard_total,
+            'keyboard_injected': self.keyboard_injected,
+            'mouse_total': self.mouse_total,
+            'mouse_injected': self.mouse_injected,
+            'keyboard_share': round(self.keyboard_share, 4),
+            'mouse_share': round(self.mouse_share, 4),
+        }
+
 
 class _Shaper:
     """Turn pynput-level facts into evdev ``(ev_type, code, value)`` triples.
@@ -102,12 +196,19 @@ def _extract_vk(key) -> int | None:
     return vk
 
 
-async def run_windows_hook(writer, session_id: str) -> None:
-    """Hook the global keyboard and mouse, feeding events to *writer* forever."""
+async def run_windows_hook(writer, session_id: str,
+                           stats: InjectionStats | None = None) -> None:
+    """Hook the global keyboard and mouse, feeding events to *writer* forever.
+
+    *stats*, if given, is filled in as events arrive so the daemon can report how
+    much of the input claims to be synthetic. Optional so the hook stays usable
+    without one.
+    """
     from pynput import keyboard, mouse
 
     loop = asyncio.get_running_loop()
     shaper = _Shaper()
+    stats = stats if stats is not None else InjectionStats()
 
     def emit(path, name, dev_type, triple, ts_ns=None) -> None:
         ev_type, code, value = triple
@@ -157,8 +258,29 @@ async def run_windows_hook(writer, session_id: str) -> None:
         if triple is not None:
             _mouse(triple)
 
-    kbd = keyboard.Listener(on_press=on_press, on_release=on_release)
-    ms = mouse.Listener(on_move=on_move, on_click=on_click, on_scroll=on_scroll)
+    # pynput calls the filter with the raw hook structure *before* dispatching to
+    # the callbacks above, on the same listener thread and in order — so the flags
+    # recorded here belong to the event the next callback describes. One filter
+    # per listener, never shared: the two listeners run on two threads.
+    #
+    # Returning False would SUPPRESS the event, swallowing the user's own
+    # keystroke. These return None, deliberately and permanently.
+    def _kbd_filter(msg, data) -> None:
+        stats.record_keyboard(getattr(data, 'flags', 0))
+
+    def _mouse_filter(msg, data) -> None:
+        stats.record_mouse(getattr(data, 'flags', 0))
+
+    # `win32_event_filter`, NOT `event_filter`. pynput namespaces backend options
+    # by platform prefix (mouse/_base.py:253) and drops any keyword that does not
+    # carry it — **silently**, with no error and a listener that still reports
+    # running. The unprefixed name was measured here: 0 filter calls while input
+    # kept flowing, i.e. a detector that detects nothing and says nothing. Pinned
+    # by a test, because nothing else would catch it.
+    kbd = keyboard.Listener(on_press=on_press, on_release=on_release,
+                            win32_event_filter=_kbd_filter)
+    ms = mouse.Listener(on_move=on_move, on_click=on_click, on_scroll=on_scroll,
+                        win32_event_filter=_mouse_filter)
     kbd.start()
     ms.start()
     logger.info('Windows input hook active (keyboard + mouse via pynput)')

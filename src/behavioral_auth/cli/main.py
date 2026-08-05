@@ -13,6 +13,10 @@ import os
 import sys
 
 from behavioral_auth import __version__, updates
+from behavioral_auth.collector.windows_source import (
+    INJECTION_MIN_SAMPLE,
+    INJECTION_WARN_SHARE,
+)
 from behavioral_auth.config import load_settings
 from behavioral_auth.daemon import commands, control
 from behavioral_auth.daemon.console import BOLD, DIM, GREEN, RED, RESET, YELLOW, bar, sparkline
@@ -53,6 +57,25 @@ def _dispatch(cfg, cmd: str, args: dict) -> int:
     return 0
 
 
+def _print_injection(snap: dict) -> None:
+    """How much of the captured input was synthesised rather than typed.
+
+    Shown even at 0 %, unlike the update notice, because here the *absence* of a
+    number is the thing a reader would misread: silence would be indistinguishable
+    from a platform that never looked. `—` says exactly that, and it is what
+    Linux shows, since evdev has no equivalent of the injected flag.
+    """
+    inj = snap.get('injection')
+    if inj is None:
+        return
+    kbd, ms = inj.get('keyboard_share', 0.0), inj.get('mouse_share', 0.0)
+    loud = max(kbd, ms) >= INJECTION_WARN_SHARE and max(
+        inj.get('keyboard_total', 0), inj.get('mouse_total', 0)) >= INJECTION_MIN_SAMPLE
+    colour = YELLOW if loud else DIM
+    print(f'  {colour}wstrzyknięte{RESET} klawiatura {kbd:.1%}, mysz {ms:.1%}'
+          + (f'  {YELLOW}← coś syntetyzuje wejście na tej maszynie{RESET}' if loud else ''))
+
+
 def cmd_status(cfg, args) -> int:
     snap = read_snapshot(cfg.daemon.run_dir)
     if not snap:
@@ -68,6 +91,7 @@ def cmd_status(cfg, args) -> int:
         print(f'  {YELLOW}demon nie działa{RESET} — poniżej ostatni znany stan')
     print(f'  {DIM}wzorzec{RESET} {(snap.get("enrollment_id") or "—")[:8]}   '
           f'{DIM}wersja{RESET} {__version__}')
+    _print_injection(snap)
 
     if snap['state'] == State.LEARNING.value:
         print()

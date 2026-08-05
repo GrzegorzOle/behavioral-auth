@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased — the daemon knows its own version, and can say a newer one exists
+## Unreleased — it knows its own version, and it counts synthetic input
 
-Asked for as "can it update itself when a new version appears". It can tell you; it
-deliberately cannot install. See README, *Updates are a notice, never a download*.
+Two things asked for in the same session: an update mechanism (answered as a notice, never
+a download — see README) and, after the mouse jiggler on this machine turned out to be a
+USB device rather than software, the cheap half of "is this input human?".
 
 - **`behavioral_auth.__version__` is the single source of truth.** Nothing in `src/` knew
   which build it was: the version lived in `pyproject.toml`, in the git tag and in
@@ -36,6 +37,34 @@ deliberately cannot install. See README, *Updates are a notice, never a download
   rather than truncated, so a pre-release is never offered to anybody.
 - **A failed check waits the full interval.** An unreachable network is the normal case
   for this product, not a reason to retry on every five-second tick or to warn daily.
+### Injected input is now counted, on Windows
+
+The first thing in this project that asks whether its input was *human*. Half an answer,
+and the cheap half — but it is measured rather than inferred.
+
+- **Both Windows low-level hooks flag events synthesised by `SendInput`**, and pynput hands
+  the whole hook structure to a filter before dispatching. The flag was already reaching
+  Python and was being dropped. `InjectionStats` counts it per channel; `status` shows the
+  share; the daemon warns once per channel when it is both large and well-sampled.
+- **Nothing is dropped and nothing is refused.** Accessibility tools, on-screen keyboards,
+  remote support and KVM software all inject legitimately, and discarding their input would
+  blind the collector exactly when a user needs it most. It warns, like the rest of this
+  product.
+- **It answers only half the question, and says so.** A *hardware* jiggler on a USB port
+  produces genuine HID events with the flag clear. Seeing one needs per-device identity —
+  RawInput / `WM_INPUT` — which pynput does not expose and which this is not.
+- **`win32_event_filter`, not `event_filter`.** pynput drops an option that lacks the
+  platform prefix silently: no error, and a listener that still reports `running`. Measured
+  on Windows, the unprefixed name gave zero filter calls while input kept flowing — a
+  detector reporting a clean machine forever. A test pins the prefixed name, because
+  nothing else would have caught it.
+- **Verified in both directions on real hardware**, not just unit-tested: 60 moves injected
+  through `SendInput` were counted 60/60 as injected with the cursor never moving, and 449
+  genuine physical mouse events were counted 0/449. No false positives, no false negatives.
+- 11 new tests (195 → 206).
+
+### Version and update notice
+
 - 47 new tests (148 → 195). The version test found this checkout's editable install three releases
   stale at 0.5.9 on its first run, which is the failure it was written for.
 
