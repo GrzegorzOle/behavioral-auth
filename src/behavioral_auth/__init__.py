@@ -22,6 +22,6 @@ Modules:
 # workflow additionally asserts that the tag being built agrees with it, because
 # a binary that misreports its own version would tell every user that an upgrade
 # is available forever.
-__version__ = '0.5.13'
+__version__ = '0.5.14'
 
 __all__ = ['__version__']

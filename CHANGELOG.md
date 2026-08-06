@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.5.14 — the mouse features were wrong in the tails, and a set could vanish
+
+Two defects found on the running machine within hours of 0.5.13, plus the command that
+turns a feature-extraction defect into a recomputation instead of a reset.
 
 ### Mouse speed could reach 4.3 million pixels per second
 
