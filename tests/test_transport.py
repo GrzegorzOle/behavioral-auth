@@ -183,3 +183,49 @@ def test_legacy_rows_are_still_trained_on(conn):
     _seq_row(conn, EID, 1, _LEGACY)
     _seq_row(conn, EID, 2, _LEGACY)
     assert len(dataset.load_sequences(conn, EID)) == 2
+
+
+# ── consolidate() must never empty a non-empty set ───────────────────────────
+#
+# This reached production. Once `win:global` became a two-way wildcard it and
+# `-/-` subsumed each other, consolidate dropped BOTH, and an enrolment made
+# entirely of pre-upgrade rows reported no stacks at all. The daemon then read
+# the first ordinary window as new hardware and advised `reset` — on 1113
+# sequences that were perfectly fine.
+
+def test_two_keys_that_say_nothing_collapse_to_one_not_to_none():
+    out = consolidate([_LEGACY, '-/-'])
+    assert len(out) == 1, f'a mutually-subsuming pair vanished: {out}'
+
+
+@pytest.mark.parametrize('keys', [
+    [_LEGACY, '-/-'],
+    [_LEGACY, '-/-', 'win:global/-', '-/win:global'],
+    ['-/-'],
+    [_CONSOLE, _LEGACY, '-/-'],
+    [_CONSOLE, '-/win:console', _LEGACY, '-/-', 'win:global/-'],
+])
+def test_a_non_empty_set_never_consolidates_to_nothing(keys):
+    assert consolidate(keys), f'consolidate({keys}) emptied the set'
+
+
+def test_the_seed_of_a_pre_upgrade_enrolment_is_not_empty():
+    """The exact production shape: every sequence written by a build that could
+    not name the transport. If this is empty, the next real window looks like new
+    hardware."""
+    previous = consolidate([_LEGACY, 'win:global/-', '-/win:global', '-/-'])
+    assert previous
+    assert newly_seen(previous, consolidate([_LEGACY, '-/win:console'])) == []
+
+
+def test_an_empty_stack_list_would_make_a_frozen_pattern_judge_nothing():
+    """Why the above matters beyond a noisy log line. trained_stacks() feeds the
+    promoted pattern's `stacks`, and a pattern entitled to judge nothing rejects
+    every window and suspends for ever."""
+    assert key_matches(_CONSOLE, []) is False
+
+
+def test_a_strictly_more_specific_key_still_wins():
+    """The behaviour consolidate existed for in the first place must survive the
+    fix: kbd/- and kbd/mouse are one stack, not two."""
+    assert consolidate(['k1/-', 'k1/m1']) == ['k1/m1']

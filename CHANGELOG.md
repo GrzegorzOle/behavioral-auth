@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **`consolidate()` could empty a non-empty set, and it did so in production.** Once
+  `win:global` became a two-way wildcard in 0.5.13, it and `-/-` subsumed each other and
+  both were dropped — so an enrolment made entirely of pre-upgrade rows reported *no*
+  hardware stacks. The daemon read that as "nothing known yet", treated the first ordinary
+  window after the upgrade as a second set of hardware, and advised `reset` on 1113 perfectly
+  good sequences. Observed on the real box within eight minutes of installing 0.5.13.
+- **The worse failure was still latent.** `trained_stacks()` feeds a promoted pattern's
+  `stacks`, and a pattern entitled to judge nothing rejects every window: had promotion
+  happened before new-transport windows accumulated, it would have frozen and then suspended
+  for ever. Narrow — it needs the gates to be met at the moment of upgrade — but real.
+- A key is now dropped only when another is **strictly** more specific, and a set of mutually
+  equivalent keys keeps one representative. Nine tests, including one that pins the exact
+  production shape and one asserting no non-empty input can consolidate to nothing.
+
 ## 0.5.13 — it knows what it is, what it is looking at, and when it stops looking
 
 Four things, all asked for in one session and all pointing the same way — the daemon should

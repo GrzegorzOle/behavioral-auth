@@ -154,9 +154,30 @@ def consolidate(keys: Iterable[str]) -> list[str]:
     as "trained across 2 hardware stacks" — because typing without touching the
     mouse produces its own key — and the warning about mixtures being permissive
     would fire for everybody, which is the fastest way to make it ignored.
+
+    **Two keys can subsume each other**, and dropping both would be a disaster.
+    `win:global/win:global` and `-/-` each say nothing, so since the legacy half
+    became a two-way wildcard each subsumes the other; the first version of this
+    dropped the pair and returned an EMPTY list for an enrolment made entirely of
+    pre-upgrade rows. That reached production: the daemon read "no stacks yet",
+    treated the first ordinary window as new hardware, and told the user to
+    consider `reset`. Worse was waiting behind it — a pattern promoted with an
+    empty stack list is entitled to judge nothing, so `key_matches` rejects every
+    window and the frozen pattern suspends for ever.
+
+    So a key is dropped only when another is *strictly* more specific, and a set
+    of mutually equivalent keys keeps one representative. A non-empty input can
+    no longer produce an empty output; a test pins that.
     """
     uniq = sorted(set(keys))
-    return [k for k in uniq if not any(subsumes(k, other) for other in uniq)]
+    kept: list[str] = []
+    for k in uniq:
+        if any(subsumes(k, other) and not subsumes(other, k) for other in uniq):
+            continue                      # something says strictly more
+        if any(subsumes(k, other) and subsumes(other, k) for other in kept):
+            continue                      # an equivalent one is already kept
+        kept.append(k)
+    return kept
 
 
 def newly_seen(previous: Iterable[str], current: Iterable[str]) -> list[str]:
