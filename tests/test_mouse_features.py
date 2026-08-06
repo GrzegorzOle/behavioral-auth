@@ -132,3 +132,70 @@ def test_clicks_and_dwell_survive_alongside_motion():
     assert f is not None
     assert f['f_ms_clicks'] == 1
     assert f['f_ms_click_dwell'] == 20.0
+
+
+# ── two reports inside one clock tick ────────────────────────────────────────
+#
+# The defect this closes reached production. `c in cur` started a new sample
+# whenever an axis repeated, even when the timestamp had not moved, so two
+# REL_X in one tick became two samples separated by zero. dt was then floored at
+# 1e-6 s -- a millionfold amplifier -- and speed = distance / dt did the rest:
+# 4.3e6 px/s against a median of 1 208, accelerations to 4.4e12.
+
+def _rel(rows):
+    """rows: (ts_ns, ev_code, ev_value) -> the frame extract_mouse_features wants."""
+    import pandas as pd
+    return pd.DataFrame([
+        {'ts_ns': t, 'dev_type': 'mouse', 'ev_type': 2, 'ev_code': c, 'ev_value': v}
+        for t, c, v in rows])
+
+
+def test_an_axis_repeating_in_the_same_tick_does_not_split_the_sample():
+    from behavioral_auth.features.mouse import _motion_samples
+    ts, dx, dy = _motion_samples(_rel([
+        (1_000_000_000, 0, 3),      # X +3
+        (1_000_000_000, 0, 4),      # X +4, same instant -> same sample
+        (1_008_000_000, 0, 5),      # 8 ms later -> a new sample
+    ]))
+    assert list(ts) == [1_000_000_000, 1_008_000_000]
+    assert list(dx) == [7.0, 5.0], 'the two reports in one tick must sum'
+
+
+def test_two_axes_in_one_tick_still_make_one_sample():
+    """The behaviour that was already right must survive the fix."""
+    from behavioral_auth.features.mouse import _motion_samples
+    ts, dx, dy = _motion_samples(_rel([
+        (1_000_000_000, 0, 3),
+        (1_000_000_000, 1, -2),
+    ]))
+    assert len(ts) == 1 and dx[0] == 3.0 and dy[0] == -2.0
+
+
+def test_a_repeat_after_the_tick_advances_still_splits():
+    from behavioral_auth.features.mouse import _motion_samples
+    ts, _, _ = _motion_samples(_rel([
+        (1_000_000_000, 0, 3),
+        (1_000_500_000, 0, 4),      # 0.5 ms later: a real second movement
+    ]))
+    assert len(ts) == 2
+
+
+def test_speed_stays_physical_when_a_tick_carries_several_reports():
+    """The end-to-end assertion. Before the fix this window reported speeds in
+    the millions of pixels per second from a hand that moved seven pixels."""
+    from behavioral_auth.features.mouse import extract_mouse_features
+    rows = []
+    for i in range(20):
+        t = 1_000_000_000 + i * 8_000_000        # a healthy 125 Hz mouse
+        rows += [(t, 0, 3), (t, 0, 4), (t, 1, 2)]
+    f = extract_mouse_features(_rel(rows))
+    assert f is not None
+    assert f['f_ms_speed_mean'] < 10_000, f"speed exploded: {f['f_ms_speed_mean']}"
+    assert abs(f['f_ms_acc_mean']) < 1e7, f"acceleration exploded: {f['f_ms_acc_mean']}"
+
+
+def test_the_floor_is_a_millisecond_not_a_microsecond():
+    """A sub-millisecond gap is the clock, not the mouse. The old 1e-6 floor
+    bounded the damage at a million times instead of preventing it."""
+    from behavioral_auth.features import mouse
+    assert mouse._MIN_DT_SEC == 1e-3

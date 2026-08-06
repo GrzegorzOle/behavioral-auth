@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Mouse speed could reach 4.3 million pixels per second
+
+`_motion_samples` started a new sample whenever an axis repeated — **including when the
+timestamp had not moved**. Two `REL_X` reports carrying one clock tick therefore became two
+samples separated by zero, and `dt` was floored at `1e-6 s`: a millionfold amplifier that
+bounded the damage without preventing it.
+
+- Measured on real captured data: `f_ms_speed_mean` up to **4 306 000 px/s** against a
+  median of 1 208, and `f_ms_acc_mean` spanning −9.7e10 to **4.4e12**. After the fix, the
+  same events give a maximum of 97 580 px/s and 9.2e7 — while the medians barely move
+  (1 208 → 1 133), which is what a fix that removes an artefact rather than the signal looks
+  like.
+- Two reports in one tick now **sum** into one sample: within a tick they are not resolvable
+  in time, and the device did move the sum of them. The floor is now 1 ms — the fastest any
+  consumer mouse reports — instead of 1 µs.
+- **`behavioral-auth rebuild-features`**, so a defect in feature *extraction* costs a
+  recomputation rather than a reset. The raw events are never discarded; this recomputes the
+  windows and sequences from them, and deletes the enrolment's learning cycles with them,
+  because a cycle's `shape` is meaningless once the feature space it was measured in is gone.
+  Verified on a copy of the production database: 5 656 → 5 658 windows, 1 492 → 1 492
+  sequences, nothing lost.
+- **This did not make promotion possible, and that is worth saying plainly.** The threshold
+  multiplier moved 512× → 471×; detection stayed at 0 %. The outliers were real and worth
+  removing, but they were not what makes the gate unsatisfiable here.
+
 - **`consolidate()` could empty a non-empty set, and it did so in production.** Once
   `win:global` became a two-way wildcard in 0.5.13, it and `-/-` subsumed each other and
   both were dropped — so an enrolment made entirely of pre-upgrade rows reported *no*

@@ -216,6 +216,33 @@ def cmd_learn_more(cfg, args) -> int:
     return _dispatch(cfg, 'learn-more', {})
 
 
+def cmd_rebuild_features(cfg, args) -> int:
+    """Recompute the feature windows from the raw events kept underneath them.
+
+    Not routed through _dispatch, and it refuses while a daemon runs rather than
+    asking one to do it: DuckDB's write lock is exclusive, and a rebuild racing a
+    live collector would interleave deletes with inserts.
+    """
+    if control.daemon_running(cfg.daemon.run_dir):
+        print('Demon działa i trzyma bazę. Zatrzymaj go najpierw: behavioral-auth stop')
+        return 1
+    if not args.yes:
+        print('To skasuje wyliczone okna cech, sekwencje i cykle nauki bieżącego wzorca,')
+        print('po czym policzy je od nowa z zachowanych surowych zdarzeń.')
+        print('Zebrane zachowanie NIE ginie — ginie tylko to, co z niego wyliczono.')
+        if input('Na pewno? [t/N] ').strip().lower() not in ('t', 'tak', 'y', 'yes'):
+            print('Anulowano.')
+            return 1
+
+    from behavioral_auth.db import open_db
+    conn = open_db(cfg)
+    try:
+        print(commands.rebuild_features(conn, cfg))
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_stop(cfg, args) -> int:
     """Shut the daemon down cleanly, and wait to see that it actually went.
 
@@ -302,6 +329,11 @@ def main() -> None:
     st.set_defaults(fn=cmd_stop)
     sub.add_parser('pause', help='wstrzymaj punktację').set_defaults(fn=cmd_pause)
     sub.add_parser('resume', help='wznów punktację').set_defaults(fn=cmd_resume)
+    rb = sub.add_parser('rebuild-features',
+                        help='przelicz okna cech z surowych zdarzeń (po poprawce '
+                             'w ekstrakcji; wymaga zatrzymanego demona)')
+    rb.add_argument('--yes', '-y', action='store_true', help='bez pytania o potwierdzenie')
+    rb.set_defaults(fn=cmd_rebuild_features)
     sub.add_parser('db', help='utwórz/zmigruj bazę').set_defaults(fn=cmd_db)
     sub.add_parser('check-update',
                    help='sprawdź, czy jest nowsza wersja (tylko informuje — '

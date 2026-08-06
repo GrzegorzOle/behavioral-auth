@@ -28,6 +28,17 @@ import numpy as np
 # 1000 Hz polling rate. Anything inside this gap is one sample.
 _SAME_SAMPLE_NS = 1_000_000        # 1 ms
 
+# Fastest any consumer mouse reports: 1000 Hz. Two motion samples closer than
+# this in time did not happen — the clock did, and speed = distance / dt turns
+# that straight into nonsense. The previous floor was 1e-6 s, a MILLIONFOLD
+# amplifier that bounded the damage without preventing it: it produced speeds up
+# to 4.3e6 px/s and accelerations to 4.4e12 on real captured data, against a
+# median of 1 208 px/s. Those tails then dominated the scaler, spread the
+# reconstruction error over two orders of magnitude, and pushed the calibrated
+# anomaly threshold to 25x the largest error ever observed -- so nothing could
+# exceed it and no learning cycle could ever be stable.
+_MIN_DT_SEC = 1e-3
+
 
 def _motion_samples(rel) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Regroup per-axis relative events into (ts, dx, dy) motion samples.
@@ -35,6 +46,15 @@ def _motion_samples(rel) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     A sample ends when the time gap exceeds :data:`_SAME_SAMPLE_NS` or when an
     axis repeats, since one movement reports each axis at most once. A missing
     axis is a real zero — the device said it did not move — not missing data.
+
+    **An axis that repeats within the very same timestamp does not start a new
+    sample; its value is added to the current one.** Two reports carrying one
+    clock tick are not resolvable in time, and splitting them produced two
+    samples separated by zero — which the speed calculation then turned into a
+    division by the floor below. Measured on this project's Windows box: median
+    speeds of 1 208 px/s with a maximum of 4 306 000, and accelerations reaching
+    4.4e12, purely from that. Summing the deltas is also what the device did:
+    within one tick it moved the sum of the two.
     """
     ts_all = rel['ts_ns'].to_numpy()
     code_all = rel['ev_code'].to_numpy()
@@ -47,10 +67,11 @@ def _motion_samples(rel) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     cur = {}
 
     for t, c, v in zip(ts_all, code_all, val_all):
+        same_instant = cur_ts is not None and t == cur_ts
         new_sample = (
             cur_ts is None
             or t - cur_ts > _SAME_SAMPLE_NS
-            or c in cur
+            or (c in cur and not same_instant)
         )
         if new_sample:
             if cur_ts is not None:
@@ -58,7 +79,10 @@ def _motion_samples(rel) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
                 dx.append(cur.get(0, 0.0))
                 dy.append(cur.get(1, 0.0))
             cur_ts, cur = int(t), {}
-        cur[int(c)] = float(v)
+        if same_instant and int(c) in cur:
+            cur[int(c)] += float(v)      # one tick, two reports: it moved the sum
+        else:
+            cur[int(c)] = float(v)
 
     if cur_ts is not None:
         ts.append(cur_ts)
@@ -93,10 +117,10 @@ def extract_mouse_features(df) -> dict | None:
         return None
     # dt spans consecutive samples, so it pairs with dx/dy from the second
     # sample onward.
-    dt = np.maximum(np.diff(ts) / 1e9, 1e-6)
+    dt = np.maximum(np.diff(ts) / 1e9, _MIN_DT_SEC)
     dist = np.hypot(dx[1:], dy[1:])
     speed = dist / dt
-    acc = np.diff(speed) / np.maximum(dt[:-1], 1e-6) if len(speed) > 1 else np.array([0.0])
+    acc = np.diff(speed) / dt[:-1] if len(speed) > 1 else np.array([0.0])
     angles = np.arctan2(dy[1:], dx[1:])
     curv = np.abs(np.diff(angles)) if len(angles) > 1 else np.array([0.0])
     curv = np.minimum(curv, 2*np.pi - curv)
