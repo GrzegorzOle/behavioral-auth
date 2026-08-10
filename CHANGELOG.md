@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.6.0 — it stops recording which key you pressed
+
+The database no longer stores the key code of a keystroke. It stores a keyboard **zone**
+— hand and row, plus space, backspace and modifiers — and a short-lived pairing number
+that exists only so a press can be matched to its release.
+
+Minor rather than patch: the on-disk schema changes, and so does what the product keeps
+about the person using it.
+
+### Why this cost nothing
+
+`ev_code` had one consumer in the whole source tree, and in the keyboard path it was used
+for exactly two things: pairing a press with its release, which needs only *equality*, and
+recognising backspace, which is one bit. Nothing computed anything per key —
+`f_ks_entropy`, despite the name, is the entropy of the **dwell-time** histogram, not of
+the key distribution.
+
+So a full keylog was being written to disk to produce eight numbers, none of which knows
+what was typed. A test extracts the same keystrokes twice, once in the old shape and once
+in the new, and asserts all eight features match: this changes what is stored, not what is
+measured.
+
+### Details worth knowing
+
+- **A zone alone cannot pair a press with its release.** Typing "as" quickly gives a-down,
+  s-down, a-up, s-up, and both letters are on the left home row — a zone-keyed map would
+  mispair a-up with s-down and report a nonsense dwell. Rollover is ordinary fluent typing,
+  so the pairing number is not optional. There is a test for that exact sequence.
+- **Backspace keeps a zone of its own** rather than joining an "edit" class with Delete.
+  `f_ks_backspace_ratio` counts backspace and nothing else, and widening it would quietly
+  redefine a feature that existing patterns are built on.
+- **Hashing the key code was rejected.** With about 256 possible values a lookup table is
+  instant, and the salt would have to be stored for pairing to survive a restart. It would
+  have looked like protection without being any.
+- The rewrite happens in the writer, the single point every event passes on its way to the
+  database, so "no key code reaches disk" is a property of one file rather than a claim
+  about the three input backends.
+
+### Upgrading
+
+Migration `005_zones.sql` adds two nullable columns and **rewrites nothing**. Events
+captured by earlier versions keep their real key codes and are still read that way, chosen
+per row — so a window spanning the upgrade works, and `rebuild-features` still works over
+older history. Existing key codes are not purged: that is the material `rebuild-features`
+recomputes from, so removing it is a decision for its owner rather than for a migration.
+
+Said plainly, because it is not nothing: a stream of zones and timings is a very lossy
+transcript, not a blank one. With enough text it narrows what might have been typed. It
+does not reveal it.
+
 ## 0.5.14 — the mouse features were wrong in the tails, and a set could vanish
 
 Two defects found on the running machine within hours of 0.5.13, plus the command that
