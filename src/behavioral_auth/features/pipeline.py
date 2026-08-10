@@ -41,7 +41,8 @@ def to_model_input(X: np.ndarray) -> np.ndarray:
 def _load_events(conn, session_id: str, since_ns: int):
     """Events for *session_id* at or after *since_ns*, ordered by time."""
     return conn.execute(
-        'SELECT ts_ns, ts_utc, dev_id, dev_type, ev_type, ev_code, ev_value '
+        'SELECT ts_ns, ts_utc, dev_id, dev_type, ev_type, ev_code, ev_value, '
+        'kb_zone, kb_pair '
         'FROM raw_events WHERE session_id = ? AND ts_ns >= ? ORDER BY ts_ns',
         [session_id, since_ns],
     ).fetchdf()

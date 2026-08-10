@@ -450,9 +450,22 @@ the procedure.
 
 Everything stays on the machine. Two things are worth knowing:
 
-- **Keystroke *codes* are recorded**, along with their timings — enough to know
-  you pressed key 30, not which character your layout maps it to, but treat
-  `behavior.duckdb` as sensitive anyway.
+- **Which key you pressed is not recorded.** The database stores a keyboard
+  *zone* — hand and row, plus space, backspace and modifiers — together with a
+  short-lived pairing number that exists only so a press can be matched to its
+  release. Nothing in the feature set reads which key it was: the eight
+  keystroke features are counts, dwell and flight timings, a backspace ratio and
+  the entropy of the dwell histogram. Storing the key code bought nothing, so it
+  is not stored.
+
+  Said plainly, because it is not zero: a stream of zones and timings is a very
+  lossy transcript, not a blank one. With enough text it narrows what you might
+  have typed. It does not reveal it. Treat `behavior.duckdb` as sensitive.
+
+  **Databases created before this change still contain real key codes** for the
+  events captured back then. They are not rewritten on upgrade — recomputing
+  features from raw events is what `rebuild-features` exists for, and silently
+  destroying that history is not a migration's decision to make.
 - **Face crops are stored** in `face_samples/<enrollment>/` (0700, 150×150
   greyscale) so the confidence threshold can be recalibrated without a fresh
   enrolment. Set `face.keep_samples: false` to keep only the trained model, or

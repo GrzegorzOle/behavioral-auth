@@ -10,11 +10,22 @@ one every feature and query assumes.
 Only two things actually have to be right for the features to mean what they
 mean on Linux:
 
-  * backspace must land on evdev KEY_BACKSPACE (14) — features/keystroke.py
-    counts it by that literal code for the backspace ratio;
-  * every physical key must get a *stable, distinct* code, so dwell can pair a
-    press with its release and the entropy/repeat features see the real key
-    distribution.
+  * backspace must land on evdev KEY_BACKSPACE (14) — it is what
+    collector/zones.py recognises to give backspace its own zone, and what
+    pre-005 rows are still read by;
+  * every physical key must get a *stable, distinct* code, so a press can be
+    paired with its release.
+
+An earlier version of this note also claimed the distinct codes were needed so
+"the entropy/repeat features see the real key distribution". That was wrong and
+it mattered, because it read as a reason to keep key identity on disk:
+f_ks_entropy is the entropy of the *dwell-time* histogram and f_ks_repeat_ratio
+counts auto-repeat events. Neither looks at which key it was, and nothing else
+does either — which is what made the pseudonymisation in collector/zones.py
+free of cost.
+
+The codes still have to be distinct *in memory*, because that is what pairing
+uses before the identity is dropped at the writer boundary.
 
 Mapping the rest to their true evdev codes as well is not required, but it is
 cheap and keeps Windows-captured data in the same coordinate system as Linux,

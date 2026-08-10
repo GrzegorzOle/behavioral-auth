@@ -13,23 +13,39 @@ from __future__ import annotations
 
 from loguru import logger
 
+from behavioral_auth.collector.zones import KeyPseudonymiser
+
 _INSERT = (
     'INSERT INTO raw_events '
     '(ts_ns, ts_utc, session_id, dev_path, dev_name, dev_id, dev_type, '
-    ' ev_type, ev_code, ev_value) '
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ' ev_type, ev_code, ev_value, kb_zone, kb_pair) '
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 )
 
 
 class Writer:
+    """Batches rows to disk, pseudonymising keystrokes on the way through.
+
+    The pseudonymiser lives here rather than in each source because this is the
+    single choke point every event passes on its way to the database — evdev,
+    the Windows hook and the synthetic generator all funnel through `add()`. One
+    place to change gives one invariant worth testing: **no key code reaches
+    disk**. Spreading it across three emitters would make that a claim about
+    three files instead of a property of one.
+
+    The sources keep emitting real key codes in memory, which is what lets
+    pairing stay exact across rollover; the identity is dropped at the boundary.
+    """
+
     def __init__(self, conn, batch_size: int = 200):
         self.conn = conn
         self.batch_size = batch_size
         self.buf: list[tuple] = []
         self.total = 0
+        self._pseudo = KeyPseudonymiser()
 
     def add(self, row: tuple) -> None:
-        self.buf.append(row)
+        self.buf.append(self._pseudo.transform(row))
         if len(self.buf) >= self.batch_size:
             self.flush()
 

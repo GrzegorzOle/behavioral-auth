@@ -69,4 +69,4 @@ jobs:
           python -m py_compile packaging/windows/service.py
 
       - name: Test the OS-agnostic port logic
-        run: python -m pytest tests/test_keycodes.py tests/test_windows_source.py tests/test_training.py tests/test_mouse_features.py tests/test_updates.py tests/test_version.py -q
+        run: python -m pytest tests/test_keycodes.py tests/test_windows_source.py tests/test_training.py tests/test_mouse_features.py tests/test_updates.py tests/test_version.py tests/test_zones.py -q

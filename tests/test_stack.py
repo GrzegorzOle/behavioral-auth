@@ -257,10 +257,18 @@ def test_every_source_produces_the_same_row_width():
     Nothing else pins this: the Linux, Windows and synthetic sources each build
     the tuple by hand, so a column added to one and forgotten in another would
     surface as a runtime error on a machine the author does not have.
+
+    Since migration 005 the source row and the INSERT are deliberately *not*
+    the same width: sources still emit a real key code, and Writer's
+    pseudonymiser replaces it with (zone, pair id) on the way past
+    (collector/zones.py). So the check is source width + 2 == INSERT width, and
+    it is done through the transform rather than by hardcoding 2 — otherwise
+    this test would keep passing if the transform stopped appending anything.
     """
     import re
 
     from behavioral_auth.collector import writer as writer_mod
+    from behavioral_auth.collector.zones import KeyPseudonymiser
 
     columns = re.search(r'\(([^)]*)\)\s*VALUES', writer_mod._INSERT).group(1)
     expected = len([c for c in columns.split(',') if c.strip()])
@@ -277,11 +285,43 @@ def test_every_source_produces_the_same_row_width():
 
     sink = _Collect()
     src = SyntheticSource(sink, 'sid', 'user', speed=1000.0)
+    pseudo = KeyPseudonymiser()
     for row in src._chunk():
-        assert len(row) == expected, f'synthetic row has {len(row)} fields, want {expected}'
+        stored = pseudo.transform(row)
+        assert len(stored) == expected, (
+            f'synthetic row stores {len(stored)} fields, want {expected}')
 
     from behavioral_auth.collector.windows_source import _Shaper
     assert _Shaper is not None      # imported on Linux too; shaping is pure
+
+
+def test_writer_stores_no_key_code_from_any_source():
+    """The privacy invariant, checked end to end against a real source.
+
+    test_zones.py pins the transform in isolation; this pins that the synthetic
+    generator's keystrokes actually arrive pseudonymised, so a source emitting
+    rows in some other shape could not slip past.
+    """
+    from behavioral_auth.collector.source import SyntheticSource
+    from behavioral_auth.collector.zones import KeyPseudonymiser
+
+    class _Collect:
+        def __init__(self):
+            self.rows = []
+
+        def add(self, row):
+            self.rows.append(row)
+
+    src = SyntheticSource(_Collect(), 'sid', 'user', speed=1000.0)
+    pseudo = KeyPseudonymiser()
+    seen_keyboard = False
+    for row in src._chunk():
+        stored = pseudo.transform(row)
+        if row[6] == 'keyboard' and row[7] == 1:
+            seen_keyboard = True
+            assert stored[8] == 0, 'a key code reached the stored row'
+            assert stored[10] is not None and stored[11] is not None
+    assert seen_keyboard, 'the generator produced no keystrokes to check'
 
 
 def test_a_keyboard_only_window_is_not_a_second_hardware_stack():

@@ -9,9 +9,15 @@ Computes 8 features from a window of raw keyboard events:
   - f_ks_backspace_ratio : fraction of backspace presses
   - f_ks_repeat_ratio  : fraction of auto-repeat events
   - f_ks_entropy       : Shannon entropy of dwell-time histogram
+
+None of these reads which key was pressed. Identity is needed only to pair a
+press with its release and to recognise backspace, which is why the collector
+stores a zone and a pairing id rather than a key code — see collector/zones.py.
 """
 
 import numpy as np
+
+from behavioral_auth.collector.zones import ZONE_BACKSPACE
 
 
 def extract_keystroke_features(df) -> dict | None:
@@ -29,6 +35,12 @@ def extract_keystroke_features(df) -> dict | None:
     k = df[df.ev_type == 1].copy()
     if k.empty:
         return None
+    # Rows written since migration 005 carry a zone and a pairing id instead of
+    # the key that was pressed (collector/zones.py). Older rows still carry the
+    # real ev_code, and a window spanning an upgrade holds both — so the choice
+    # is made per row, not per window, and `rebuild-features` keeps working over
+    # history captured either way.
+    has_zone = 'kb_zone' in k.columns
     downs, dwell, flight = {}, [], []
     last_down = None
     backspace = 0
@@ -38,14 +50,22 @@ def extract_keystroke_features(df) -> dict | None:
         total += 1
         if r.ev_value == 2:
             repeat += 1
+        zone = r.kb_zone if has_zone else None
+        pseudonymised = zone is not None and zone == zone      # False for NaN
+        if pseudonymised:
+            key = ('p', int(r.kb_pair))
+            is_backspace = int(zone) == ZONE_BACKSPACE
+        else:
+            key = ('c', int(r.ev_code))
+            is_backspace = r.ev_code == 14
         if r.ev_value == 1:
             if last_down is not None:
                 flight.append((r.ts_ns - last_down) / 1e6)
-            downs[r.ev_code] = r.ts_ns
+            downs[key] = r.ts_ns
             last_down = r.ts_ns
-        elif r.ev_value == 0 and r.ev_code in downs:
-            dwell.append((r.ts_ns - downs.pop(r.ev_code)) / 1e6)
-        if r.ev_code == 14:
+        elif r.ev_value == 0 and key in downs:
+            dwell.append((r.ts_ns - downs.pop(key)) / 1e6)
+        if is_backspace:
             backspace += 1
     if len(dwell) < 2:
         return None

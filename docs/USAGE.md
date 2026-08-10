@@ -24,6 +24,15 @@ strongest thing it does is write a log line, print a message, fire a desktop not
 and (if you switch it on) forward an event to a SIEM. Everything stays on the machine
 unless you explicitly enable SIEM forwarding.
 
+**It does not record which keys you press.** Since 0.6.0 the database keeps a keyboard
+*zone* — hand and row, plus space, backspace and modifiers — alongside the timings, which
+is all the eight keystroke features ever used. Said plainly, because it is not nothing: a
+stream of zones and timings is a very lossy transcript rather than a blank one, so with
+enough text it narrows what you might have typed without revealing it. Treat
+`behavior.duckdb` as sensitive. **Databases created before 0.6.0 still hold real key codes**
+for the events captured back then — upgrading does not rewrite them, because that history is
+what `rebuild-features` recomputes from.
+
 **Lifecycle:** `LEARNING` → `MONITORING` → `ALARM`. It learns until it has enough of your
 behaviour, freezes the pattern (promotion), then scores live behaviour against it. A
 sustained mismatch raises an alarm; a return to normal clears it.
@@ -495,6 +504,15 @@ niego pasować. Opcjonalnie sprawdza też Twoją **twarz** z kamery.
 co robi, to wpis w logu, komunikat, powiadomienie na pulpicie i (jeśli włączysz) przesłanie
 zdarzenia do SIEM. Wszystko zostaje na maszynie, chyba że świadomie włączysz forwarding do
 SIEM.
+
+**Nie zapisuje, które klawisze naciskasz.** Od 0.6.0 baza trzyma *strefę* klawiatury — rękę
+i rząd, plus spację, backspace i modyfikatory — razem z czasami, i tylko tyle kiedykolwiek
+było potrzebne ośmiu cechom klawiaturowym. Mówiąc wprost, bo to nie jest zero: ciąg stref i
+czasów to bardzo stratny zapis tekstu, a nie pusty — przy dostatecznej ilości tekstu zawęża
+to, co mogłeś napisać, ale tego nie ujawnia. Traktuj `behavior.duckdb` jako dane wrażliwe.
+**Bazy utworzone przed 0.6.0 nadal zawierają prawdziwe kody klawiszy** dla zdarzeń zebranych
+wcześniej — aktualizacja ich nie przepisuje, bo to z tej historii przelicza
+`rebuild-features`.
 
 **Wzorzec należy do jednego zestawu sprzętu (Linux).** Inaczej pisze się na klawiaturze
 laptopa, a inaczej na zewnętrznej przez dock, więc wzorzec nauczony w doku nie jest używany
